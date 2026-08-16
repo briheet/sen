@@ -40,9 +40,7 @@ Dynamic Control-Flow Analysis and Runtime Visualization for Go Programs,
 combining source-level program analysis, runtime instrumentation, profiling,
 and execution-path visualization to show how code executes in real time.
 `,
-		Example: `
-senbon ./<main.go-dir>
-`,
+		Example: "senbon",
 		Args:    cobra.NoArgs,
 		Version: Version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -84,7 +82,10 @@ senbon ./<main.go-dir>
 	// Define all your flags here
 	rootCmd.PersistentFlags().BoolVarP(&Profile, "profile", "p", false, "record CPU and Mem pprof")
 
-	if err := rootCmd.Execute(); err != nil {
+	// Main run command for building, and starting tui
+	rootCmd.AddCommand(RunCmd())
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		return 1
 	}
 	return 0
