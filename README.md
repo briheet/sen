@@ -1,5 +1,7 @@
 # Senbon
 
+![Senbon Ascii](./assets/senbon_ascii.png)
+
 Senbon analyzes an application's source code and combines it with live runtime
 data so performance costs can be displayed on files, functions, and call paths.
 
