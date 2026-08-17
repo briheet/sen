@@ -24,6 +24,7 @@ launches the TUI.`,
 			if err != nil {
 				return err
 			}
+			defer engine.Runtime.Process.Cleanup()
 			return engine.Run()
 		},
 	}

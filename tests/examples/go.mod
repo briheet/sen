@@ -1,3 +1,3 @@
-module hello
+module example.com/senbon-http
 
-go 1.26.5
+go 1.25

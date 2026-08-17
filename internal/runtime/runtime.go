@@ -3,7 +3,13 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
 
 	runtimemetrics "github.com/briheet/senbon/internal/runtime/metrics"
 	runtimepprof "github.com/briheet/senbon/internal/runtime/pprof"
@@ -17,7 +23,16 @@ type Runtime struct {
 	Metrics  *runtimemetrics.RuntimeMetrics
 	Profiles map[string]*runtimepprof.Profile
 	Trace    *runtimetrace.Trace
+
+	client *http.Client
 }
+
+const (
+	metricsPath  = "/debug/senbon/metrics"
+	pprofPath    = "/debug/pprof/"
+	tracePath    = "/debug/pprof/trace"
+	collectorURL = "http://senbon"
+)
 
 // NewRuntime builds the target process.
 func NewRuntime(ctx context.Context, sourceDir string) (*Runtime, error) {
@@ -25,11 +40,25 @@ func NewRuntime(ctx context.Context, sourceDir string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", process.CollectorSocket)
+	}}
 	return &Runtime{
 		Process:  process,
 		Metrics:  &runtimemetrics.RuntimeMetrics{},
 		Profiles: make(map[string]*runtimepprof.Profile),
+		client:   &http.Client{Transport: transport},
 	}, nil
+}
+
+// ReadMetrics decodes and stores target runtime metrics.
+func (r *Runtime) ReadMetrics(reader io.Reader) error {
+	result, err := runtimemetrics.Read(reader)
+	if err != nil {
+		return err
+	}
+	r.Metrics = result
+	return nil
 }
 
 // ReadProfile decodes and stores a named pprof profile.
@@ -37,9 +66,6 @@ func (r *Runtime) ReadProfile(name string, reader io.Reader) error {
 	profile, err := runtimepprof.Read(reader)
 	if err != nil {
 		return err
-	}
-	if r.Profiles == nil {
-		r.Profiles = make(map[string]*runtimepprof.Profile)
 	}
 	r.Profiles[name] = profile
 	return nil
@@ -53,4 +79,50 @@ func (r *Runtime) ReadTrace(reader io.Reader) error {
 	}
 	r.Trace = result
 	return nil
+}
+
+// CollectMetrics requests current metrics from the target process.
+func (r *Runtime) CollectMetrics(ctx context.Context) error {
+	return r.collect(ctx, metricsPath, r.ReadMetrics)
+}
+
+// CollectProfile requests and stores a named pprof profile.
+func (r *Runtime) CollectProfile(ctx context.Context, name string, duration time.Duration) error {
+	path := pprofPath + url.PathEscape(name)
+	if name == "cpu" {
+		path = pprofPath + "profile"
+	}
+	if duration > 0 {
+		seconds := (duration + time.Second - 1) / time.Second
+		path += "?seconds=" + strconv.FormatInt(int64(seconds), 10)
+	}
+	return r.collect(ctx, path, func(reader io.Reader) error {
+		return r.ReadProfile(name, reader)
+	})
+}
+
+// CollectTrace requests and stores a completed runtime trace.
+func (r *Runtime) CollectTrace(ctx context.Context, duration time.Duration) error {
+	path := tracePath
+	if duration > 0 {
+		seconds := (duration + time.Second - 1) / time.Second
+		path += "?seconds=" + strconv.FormatInt(int64(seconds), 10)
+	}
+	return r.collect(ctx, path, r.ReadTrace)
+}
+
+func (r *Runtime) collect(ctx context.Context, path string, decode func(io.Reader) error) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, collectorURL+path, nil)
+	if err != nil {
+		return err
+	}
+	response, err := r.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("collector returned %s", response.Status)
+	}
+	return decode(response.Body)
 }

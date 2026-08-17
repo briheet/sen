@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"log"
+	"time"
 
 	"github.com/briheet/senbon/internal/analysis"
 	"github.com/briheet/senbon/internal/helpers"
@@ -79,5 +81,61 @@ func (e *Engine) TraceUpdate() model.RuntimeUpdate {
 }
 
 func (e *Engine) Run() error {
-	return nil
+	done := make(chan error, 1)
+	go func() { done <- e.Runtime.Process.Run() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for {
+		if err := e.Runtime.CollectMetrics(ctx); err == nil {
+			break
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-ctx.Done():
+			_ = e.Runtime.Process.Stop()
+			<-done
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	log.Printf("senbon: collector ready")
+
+	started := time.Now()
+	if err := e.Runtime.CollectProfile(ctx, "cpu", time.Second); err != nil {
+		_ = e.Runtime.Process.Stop()
+		<-done
+		return err
+	}
+	log.Printf("senbon: cpu profile collected in %s", time.Since(started))
+
+	started = time.Now()
+	if err := e.Runtime.CollectTrace(ctx, time.Second); err != nil {
+		_ = e.Runtime.Process.Stop()
+		<-done
+		return err
+	}
+	log.Printf("senbon: trace collected in %s", time.Since(started))
+	if err := e.Runtime.CollectMetrics(ctx); err != nil {
+		_ = e.Runtime.Process.Stop()
+		<-done
+		return err
+	}
+
+	e.Graph.ApplyUpdate(e.Snapshot())
+	mapped := 0
+	for _, node := range e.Graph.Nodes {
+		if len(node.Metrics) != 0 {
+			mapped++
+		}
+	}
+	log.Printf("senbon: heap=%d objects=%d cpu_samples=%d trace_events=%d mapped_nodes=%d",
+		e.Graph.Global.Process.LiveHeap,
+		e.Graph.Global.Process.CurrHeapObjects,
+		len(e.Runtime.Profiles["cpu"].Samples),
+		len(e.Runtime.Trace.Events),
+		mapped,
+	)
+	return <-done
 }
