@@ -1,4 +1,4 @@
-package runtime
+package process
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 const (
 	CollectorFileName    = "collector.go"
 	OverlayFileName      = "overlay.json"
-	VirtualFilePrefix    = "zz_"
-	VirtualFileExtension = ".go"
+	virtualFilePrefix    = "zz_"
+	virtualFileExtension = ".go"
 	CollectorSource      = `package main
 
 import (
@@ -30,22 +30,14 @@ func init() {}
 `
 )
 
-func CreateOverlay(ctx context.Context, sourceDir string, tempDir string) (string, error) {
-	// Absolute path + Collector path for overlay adding
-	collectorPath := filepath.Join(sourceDir, CollectorFileName)
+// CreateOverlay writes the collector and its Go build overlay.
+func CreateOverlay(_ context.Context, sourceDir string, tempDir string) (string, error) {
+	collectorPath := filepath.Join(tempDir, CollectorFileName)
 	if err := os.WriteFile(collectorPath, []byte(CollectorSource), 0o600); err != nil {
 		return "", err
 	}
 
-	// Create a virtual filepath for overlay json addition
 	virtualName := virtualFilePrefix + strings.ReplaceAll(filepath.Base(tempDir), "-", "_") + virtualFileExtension
-
-	// Overlay json file
-	// {
-	//   "Replace": {
-	//     "/code/myapp/zz_senbon_12345.go": "/tmp/senbon-12345/collector.go"
-	//   }
-	// }
 	overlay, err := json.Marshal(struct {
 		Replace map[string]string
 	}{
@@ -57,11 +49,9 @@ func CreateOverlay(ctx context.Context, sourceDir string, tempDir string) (strin
 		return "", err
 	}
 
-	// Join overlay file to tempDir and write over the template
 	overlayPath := filepath.Join(tempDir, OverlayFileName)
 	if err = os.WriteFile(overlayPath, overlay, 0o600); err != nil {
 		return "", err
 	}
-
 	return overlayPath, nil
 }

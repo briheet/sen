@@ -1,4 +1,5 @@
-package runtime
+// Package process builds and manages the target Go program.
+package process
 
 import (
 	"context"
@@ -8,22 +9,19 @@ import (
 )
 
 const (
-	tempDirPattern       = "senbon-*"
-	binaryFileName       = "main"
-	virtualFilePrefix    = "zz_"
-	virtualFileExtension = ".go"
+	tempDirPattern = "senbon-*"
+	binaryFileName = "main"
 )
 
-// Process handles the lifecycle of go's program
+// Process handles the lifecycle of the target program.
 type Process struct {
 	BinaryPath string
 	RunCmd     *exec.Cmd
 	tempDir    string
 }
 
-// This will build with overlay and store process context
+// NewProcess builds the target program with the Senbon overlay.
 func NewProcess(ctx context.Context, sourceDir string) (process *Process, err error) {
-	// Create a tempDir for binary and overlay stuff
 	tempDir, err := os.MkdirTemp("", tempDirPattern)
 	if err != nil {
 		return nil, err
@@ -34,13 +32,11 @@ func NewProcess(ctx context.Context, sourceDir string) (process *Process, err er
 		}
 	}()
 
-	// Create an overlay before build for collector
 	overlayPath, err := CreateOverlay(ctx, sourceDir, tempDir)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build process
 	binaryPath := filepath.Join(tempDir, binaryFileName)
 	buildCmd := exec.CommandContext(ctx, "go", "build", "-overlay="+overlayPath, "-o", binaryPath, ".")
 	buildCmd.Dir = sourceDir
@@ -60,12 +56,12 @@ func NewProcess(ctx context.Context, sourceDir string) (process *Process, err er
 	return &Process{BinaryPath: binaryPath, RunCmd: runCmd, tempDir: tempDir}, nil
 }
 
-// Run starts the built program and waits for it to exit.
+// Run starts the target program and waits for it to exit.
 func (p *Process) Run() error {
 	return p.RunCmd.Run()
 }
 
-// Stop terminates the running program.
+// Stop terminates the running target program.
 func (p *Process) Stop() error {
 	return p.RunCmd.Process.Kill()
 }

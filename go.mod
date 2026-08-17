@@ -3,8 +3,10 @@ module github.com/briheet/senbon
 go 1.25.12
 
 require (
+	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297
 	golang.org/x/tools v0.49.0
 )
 
