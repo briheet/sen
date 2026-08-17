@@ -26,3 +26,7 @@ go build -o bin/senbon ./cmd/senbon
 
 The CLI currently runs the target and prints a collection summary. The TUI is
 under development.
+
+## License
+
+Senbon is available under the [MIT License](LICENSE).
