@@ -3,6 +3,7 @@ package helpers
 import (
 	"errors"
 	"os"
+	"path/filepath"
 )
 
 var (
@@ -14,6 +15,13 @@ var (
 
 // This does validation for main source path
 func ValidateSourcePath(sourcePath string) error {
+	// Create a absolute Source path if not
+	// Helps in future and reduces absolute path checks
+	sourcePath, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return err
+	}
+
 	// Get source info
 	info, err := os.Stat(sourcePath)
 	if err != nil {
