@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/types"
 	"strings"
@@ -44,7 +45,7 @@ func (e *PackageErrors) Error() string {
 func loadPackages(ctx context.Context, sourcePath string) ([]*packages.Package, error) {
 	// Build config and loading packages
 	pkgConfig := packages.Config{
-		Mode:    packages.LoadAllSyntax,
+		Mode:    packages.LoadAllSyntax | packages.NeedModule,
 		Context: ctx,
 		Dir:     sourcePath,
 	}
@@ -53,6 +54,9 @@ func loadPackages(ctx context.Context, sourcePath string) ([]*packages.Package, 
 	pkgs, err := packages.Load(&pkgConfig, CwdLimiter)
 	if err != nil {
 		return nil, err
+	}
+	if len(pkgs) == 0 || pkgs[0].Module == nil {
+		return nil, errors.New("source package has no module metadata")
 	}
 
 	// Temp struct for package loading errors

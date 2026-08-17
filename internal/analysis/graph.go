@@ -1,4 +1,4 @@
-package graph
+package analysis
 
 import (
 	"go/ast"
@@ -7,7 +7,6 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/briheet/senbon/internal/analysis"
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/packages"
@@ -257,14 +256,14 @@ func (g *Graph) FileFunctions(id FileID) []*Node {
 
 func GetGraph(pkgs []*packages.Package) (*Graph, error) {
 	// build ssa package and get main
-	mainFunc, err := analysis.BuildPackagesAndReturnMain(pkgs)
+	mainFunc, err := BuildPackagesAndReturnMain(pkgs)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get rta result. No reflection
 	// TODO: Get back to here
-	result := analysis.BuildCallgraph(mainFunc)
+	result := BuildCallgraph(mainFunc)
 
 	// Build graph
 	graph := buildGraph(result)
@@ -277,6 +276,25 @@ func buildGraph(result *rta.Result) *Graph {
 		Nodes:    make(map[NodeID]*Node),
 		Files:    make(map[FileID]*File),
 		Packages: make(map[PackageID]*Package),
+	}
+
+	reachable := make([]*ssa.Function, 0, len(result.Reachable))
+	for fn := range result.Reachable {
+		reachable = append(reachable, fn)
+	}
+	sort.Slice(reachable, func(i, j int) bool {
+		left := reachable[i].Prog.Fset.Position(reachable[i].Pos())
+		right := reachable[j].Prog.Fset.Position(reachable[j].Pos())
+		if left.Filename != right.Filename {
+			return left.Filename < right.Filename
+		}
+		if left.Offset != right.Offset {
+			return left.Offset < right.Offset
+		}
+		return reachable[i].String() < reachable[j].String()
+	})
+	for _, fn := range reachable {
+		result.CallGraph.CreateNode(fn)
 	}
 
 	nodes := make([]*callgraph.Node, 0, len(result.CallGraph.Nodes))

@@ -3,8 +3,10 @@ package engine
 import (
 	"context"
 
-	"github.com/briheet/senbon/internal/graph"
+	"github.com/briheet/senbon/internal/analysis"
 	"github.com/briheet/senbon/internal/helpers"
+	"github.com/briheet/senbon/internal/model"
+	targetruntime "github.com/briheet/senbon/internal/runtime"
 )
 
 const (
@@ -16,10 +18,11 @@ type Driver interface {
 	Run() error
 }
 
-// This is the main Engine of the program. It verifies, loads, builds,
-// performs analysis, setups logs, instrumentation, tui, etc.
-// It conforms to Driver interface.
-type Engine struct{}
+// Engine owns the target runtime and the merged graph exposed to the TUI.
+type Engine struct {
+	Runtime *targetruntime.Runtime
+	Graph   *model.RuntimeGraph
+}
 
 // Have compile time check
 var _ Driver = (*Engine)(nil)
@@ -38,12 +41,41 @@ func NewEngine(ctx context.Context, sourcePath string) (*Engine, error) {
 	}
 
 	// Build ssa, Analyze via rta and return internal graph representation
-	_, err = graph.GetGraph(pkgs)
+	static, err := analysis.GetGraph(pkgs)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Engine{}, nil
+	observed, err := targetruntime.NewRuntime(ctx, sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	merged := model.BuildRuntimeGraph(pkgs[0].Module.Path, static)
+
+	return &Engine{
+		Runtime: observed,
+		Graph:   merged,
+	}, nil
+}
+
+// Snapshot returns a complete runtime update for the TUI to apply.
+func (e *Engine) Snapshot() model.RuntimeUpdate {
+	return e.Graph.BuildUpdate(e.Runtime)
+}
+
+// MetricsUpdate returns the latest process metrics.
+func (e *Engine) MetricsUpdate() model.RuntimeUpdate {
+	return e.Graph.BuildMetricsUpdate(e.Runtime.Metrics)
+}
+
+// ProfileUpdate returns one named profile, replacing its previous data.
+func (e *Engine) ProfileUpdate(name string) model.RuntimeUpdate {
+	return e.Graph.BuildProfileUpdate(name, e.Runtime.Profiles[name])
+}
+
+// TraceUpdate returns the latest trace, replacing its previous data.
+func (e *Engine) TraceUpdate() model.RuntimeUpdate {
+	return e.Graph.BuildTraceUpdate(e.Runtime.Trace)
 }
 
 func (e *Engine) Run() error {

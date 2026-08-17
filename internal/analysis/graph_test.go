@@ -1,4 +1,4 @@
-package graph
+package analysis
 
 import (
 	"os"
@@ -33,16 +33,22 @@ func TestBuildGraph(t *testing.T) {
 		"go.mod": "module graphfixture\n\ngo 1.25\n",
 		"main.go": `package main
 
+import "reflect"
+
 type runner interface { Run(int) int }
 type worker struct{}
+type reflected struct{}
 
 func (worker) Run(value int) int { return helper(value) }
+func (reflected) Reflected() {}
+func dead() {}
 
 func main() {
 	helper(1)
 	helper(2)
 	var r runner = worker{}
 	r.Run(3)
+	reflect.ValueOf(reflected{}).MethodByName("Reflected").Call(nil)
 	captured := 4
 	func() { helper(captured) }()
 }
@@ -69,15 +75,22 @@ func helper(value int) int {
 	parsed, err := GetGraph(pkgs)
 	require.NoError(t, err)
 	require.NotEmpty(t, parsed.Nodes)
-	require.Len(t, parsed.Packages, 1)
-	require.Len(t, parsed.Files, 2)
+	require.Contains(t, parsed.Packages, parsed.Nodes[parsed.Root].Pkg)
 
 	byName := make(map[string]*Node)
 	var runNode *Node
+	var reflectedNode *Node
+	var deadNode *Node
 	for _, node := range parsed.Nodes {
 		byName[node.Name] = node
 		if node.Name == "Run" && node.Signature.Receiver == "graphfixture.worker" {
 			runNode = node
+		}
+		if node.Name == "Reflected" && node.Signature.Receiver == "graphfixture.reflected" {
+			reflectedNode = node
+		}
+		if node.Name == "dead" && node.Info.Package == "graphfixture" {
+			deadNode = node
 		}
 	}
 	mainNode := byName["main"]
@@ -85,6 +98,8 @@ func helper(value int) int {
 	require.NotNil(t, mainNode)
 	require.NotNil(t, helperNode)
 	require.NotNil(t, runNode)
+	require.NotNil(t, reflectedNode)
+	require.Nil(t, deadNode)
 	require.Equal(t, mainNode.ID, parsed.Root)
 	require.Equal(t, "graphfixture.worker", runNode.Signature.Receiver)
 	require.Equal(t, "int", runNode.Signature.Params[0].Type)
@@ -119,8 +134,8 @@ func helper(value int) int {
 	}
 	require.NotNil(t, mainFile)
 	require.NotNil(t, helperFile)
-	require.Equal(t, []FileID{helperFile.ID}, mainFile.Calls)
-	require.Equal(t, []FileID{mainFile.ID}, helperFile.CalledBy)
+	require.Contains(t, mainFile.Calls, helperFile.ID)
+	require.Contains(t, helperFile.CalledBy, mainFile.ID)
 
 	methodFound := false
 	for _, methodSet := range parsed.Program.MethodSets {
