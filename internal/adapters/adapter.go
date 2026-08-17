@@ -12,6 +12,8 @@ const (
 	GoTarget = "go"
 	// NodeTarget identifies the Node.js adapter.
 	NodeTarget = "node"
+	// ZigTarget identifies the Zig adapter.
+	ZigTarget = "zig"
 )
 
 // Analyzer builds a normalized static graph and returns its source namespace.

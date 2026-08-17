@@ -7,6 +7,7 @@ import (
 	"github.com/briheet/senbon/internal/adapters"
 	golangadapter "github.com/briheet/senbon/internal/adapters/golang"
 	nodeadapter "github.com/briheet/senbon/internal/adapters/node"
+	zigadapter "github.com/briheet/senbon/internal/adapters/zig"
 )
 
 // ErrUnsupportedTarget reports an unknown language.
@@ -19,6 +20,8 @@ func Application(language string) (adapters.Application, error) {
 		return new(golangadapter.Adapter), nil
 	case adapters.NodeTarget:
 		return new(nodeadapter.Adapter), nil
+	case adapters.ZigTarget:
+		return new(zigadapter.Adapter), nil
 	default:
 		return nil, ErrUnsupportedTarget
 	}
