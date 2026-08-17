@@ -10,8 +10,8 @@ const benchPayloadSize = 1024
 
 func BenchmarkWriteFrame(b *testing.B) {
 	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
 	writer := &Client{conn: client}
 	reader := &Client{conn: server, reader: bufio.NewReader(server)}
 	go func() {
@@ -33,8 +33,8 @@ func BenchmarkWriteFrame(b *testing.B) {
 
 func BenchmarkReadFrame(b *testing.B) {
 	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
 	writer := &Client{conn: server}
 	reader := &Client{conn: client, reader: bufio.NewReader(client)}
 	go func() {

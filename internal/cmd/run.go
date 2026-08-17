@@ -22,7 +22,7 @@ launches the TUI.`,
 			if err != nil {
 				return err
 			}
-			defer target.Cleanup()
+			defer func() { _ = target.Cleanup() }()
 			return target.Run()
 		},
 	}

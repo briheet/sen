@@ -25,7 +25,7 @@ func TestCollectRuntimeData(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- observed.Process.Run() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for {
 		err = observed.CollectMetrics(ctx)

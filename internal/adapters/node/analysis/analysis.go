@@ -55,7 +55,7 @@ func Analyze(ctx context.Context, projectDir string) (*model.StaticGraph, error)
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(helperPath)
+	defer func() { _ = os.Remove(helperPath) }()
 
 	output, err := exec.CommandContext(ctx, "node", helperPath, projectDir).Output()
 	if err != nil {
@@ -129,12 +129,12 @@ func writeHelper() (string, error) {
 		return "", err
 	}
 	if _, err := file.Write(helperSource); err != nil {
-		file.Close()
-		os.Remove(file.Name())
+		_ = file.Close()
+		_ = os.Remove(file.Name())
 		return "", err
 	}
 	if err := file.Close(); err != nil {
-		os.Remove(file.Name())
+		_ = os.Remove(file.Name())
 		return "", err
 	}
 	return file.Name(), nil

@@ -29,7 +29,7 @@ func TestCollect(t *testing.T) {
 
 	runtime, err := NewRuntime(context.Background(), dir)
 	require.NoError(t, err)
-	defer runtime.Cleanup()
+	defer func() { _ = runtime.Cleanup() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()

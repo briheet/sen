@@ -71,7 +71,7 @@ and execution-path visualization to show how code executes in real time.
 			if perr != nil {
 				return perr
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
 			runtime.GC()
 			err := pprof.WriteHeapProfile(f)

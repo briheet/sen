@@ -52,25 +52,25 @@ func Dial(ctx context.Context, rawURL string) (*Client, error) {
 	}
 	request := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n", path, address, key64)
 	if _, err := conn.Write([]byte(request)); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 
 	reader := bufio.NewReader(conn)
 	status, err := reader.ReadString('\n')
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 	if !strings.Contains(status, "101") {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("websocket upgrade failed: %s", strings.TrimSpace(status))
 	}
 	accept := ""
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, err
 		}
 		line = strings.TrimSpace(line)
@@ -87,7 +87,7 @@ func Dial(ctx context.Context, rawURL string) (*Client, error) {
 	}
 	sum := sha1.Sum([]byte(key64 + magicGUID))
 	if accept != base64.StdEncoding.EncodeToString(sum[:]) {
-		conn.Close()
+		_ = conn.Close()
 		return nil, errors.New("websocket accept mismatch")
 	}
 
@@ -156,7 +156,7 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) readLoop() {
-	defer c.conn.Close()
+	defer func() { _ = c.conn.Close() }()
 	for {
 		payload, err := c.readFrame()
 		if err != nil {

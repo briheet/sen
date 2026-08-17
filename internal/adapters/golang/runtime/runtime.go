@@ -177,7 +177,7 @@ func (r *Runtime) collect(ctx context.Context, path string, decode func(io.Reade
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("collector returned %s", response.Status)
 	}
