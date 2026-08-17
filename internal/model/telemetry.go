@@ -95,11 +95,24 @@ type NodeMetrics struct {
 	ActiveResources      uint64
 }
 
+// RedisMetrics contains measurements exposed by a Redis server.
+type RedisMetrics struct {
+	UsedMemory               uint64
+	UsedMemoryDataset        uint64
+	RSS                      uint64
+	UserCPU                  float64
+	SystemCPU                float64
+	ConnectedClients         uint64
+	TotalCommandsProcessed   uint64
+	TotalConnectionsReceived uint64
+}
+
 // RuntimeMetrics contains one normalized process and runtime snapshot.
 type RuntimeMetrics struct {
 	Process ProcessMetrics
 	Go      GoMetrics
 	Node    NodeMetrics
+	Redis   RedisMetrics
 }
 
 // EventKind identifies a runtime event.

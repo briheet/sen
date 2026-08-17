@@ -7,6 +7,7 @@ import (
 	"github.com/briheet/sen/internal/adapters"
 	golangadapter "github.com/briheet/sen/internal/adapters/golang"
 	nodeadapter "github.com/briheet/sen/internal/adapters/node"
+	redisadapter "github.com/briheet/sen/internal/adapters/redis"
 )
 
 // ErrUnsupportedTarget reports an unknown language.
@@ -19,6 +20,8 @@ func Application(language string) (adapters.Application, error) {
 		return new(golangadapter.Adapter), nil
 	case adapters.NodeTarget:
 		return new(nodeadapter.Adapter), nil
+	case adapters.RedisTarget:
+		return new(redisadapter.Adapter), nil
 	default:
 		return nil, ErrUnsupportedTarget
 	}

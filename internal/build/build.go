@@ -26,14 +26,7 @@ type Group struct {
 
 // New constructs engines for supported services in configuration order.
 func New(ctx context.Context, configuration *config.Config) (*Group, error) {
-	runnable := false
-	for _, service := range configuration.Services {
-		if service.Type == config.ServiceTypeServer {
-			runnable = true
-			break
-		}
-	}
-	if !runnable {
+	if len(configuration.Services) == 0 {
 		return nil, errNoRunnableServices
 	}
 
@@ -53,12 +46,12 @@ func New(ctx context.Context, configuration *config.Config) (*Group, error) {
 
 	for _, service := range configuration.Services {
 		fields := serviceLogFields(service)
-		if service.Type != config.ServiceTypeServer {
-			group.logger.Info("supporting service loaded", fields...)
-			continue
-		}
 		group.logger.Info("building service", fields...)
-		target, err := engine.NewEngine(ctx, service, logs.Output(service.Name, string(service.Type), string(service.Lang)))
+		adapter := string(service.Lang)
+		if service.Type == config.ServiceTypeKV {
+			adapter = string(service.Provider)
+		}
+		target, err := engine.NewEngine(ctx, service, logs.Output(service.Name, string(service.Type), adapter))
 		if err != nil {
 			group.logger.Error("build service failed", append(fields, zap.Error(err))...)
 			cleanupErr := group.Cleanup()

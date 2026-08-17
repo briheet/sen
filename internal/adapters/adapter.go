@@ -19,6 +19,8 @@ const (
 	GoTarget = "go"
 	// NodeTarget identifies the Node.js adapter.
 	NodeTarget = "node"
+	// RedisTarget identifies the Redis adapter.
+	RedisTarget = "redis"
 )
 
 // Analyzer builds a normalized static graph and returns its source namespace.
