@@ -1,4 +1,4 @@
 bin/
 .direnv/
 docs/
-
+*.test

@@ -5,14 +5,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/briheet/senbon/internal/analysis"
+	"github.com/briheet/senbon/internal/adapters/golang"
+	targetruntime "github.com/briheet/senbon/internal/adapters/golang/runtime"
 	"github.com/briheet/senbon/internal/helpers"
 	"github.com/briheet/senbon/internal/model"
-	targetruntime "github.com/briheet/senbon/internal/runtime"
-)
-
-const (
-	CwdLimiter = "."
 )
 
 // Main engine interface. Couldn't come up with good naming :)
@@ -36,14 +32,7 @@ func NewEngine(ctx context.Context, sourcePath string) (*Engine, error) {
 		return nil, err
 	}
 
-	// Load packages and handle errors if so
-	pkgs, err := loadPackages(ctx, sourcePath)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build ssa, Analyze via rta and return internal graph representation
-	static, err := analysis.GetGraph(pkgs)
+	static, namespace, err := new(golang.Adapter).Analyze(ctx, sourcePath)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +41,7 @@ func NewEngine(ctx context.Context, sourcePath string) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	merged := model.BuildRuntimeGraph(pkgs[0].Module.Path, static)
+	merged := model.BuildRuntimeGraph(namespace, static)
 
 	return &Engine{
 		Runtime: observed,
@@ -62,7 +51,7 @@ func NewEngine(ctx context.Context, sourcePath string) (*Engine, error) {
 
 // Snapshot returns a complete runtime update for the TUI to apply.
 func (e *Engine) Snapshot() model.RuntimeUpdate {
-	return e.Graph.BuildUpdate(e.Runtime)
+	return e.Graph.BuildUpdate(e.Runtime.Metrics, e.Runtime.Profiles, e.Runtime.Trace)
 }
 
 // MetricsUpdate returns the latest process metrics.
@@ -103,20 +92,18 @@ func (e *Engine) Run() error {
 	log.Printf("senbon: collector ready")
 
 	started := time.Now()
-	if err := e.Runtime.CollectProfile(ctx, "cpu", time.Second); err != nil {
-		_ = e.Runtime.Process.Stop()
-		<-done
-		return err
+	results := make(chan error, 2)
+	go func() { results <- e.Runtime.CollectProfile(ctx, "cpu", time.Second) }()
+	go func() { results <- e.Runtime.CollectTrace(ctx, time.Second) }()
+	for range 2 {
+		if err := <-results; err != nil {
+			_ = e.Runtime.Process.Stop()
+			<-done
+			return err
+		}
 	}
-	log.Printf("senbon: cpu profile collected in %s", time.Since(started))
+	log.Printf("senbon: cpu profile and trace collected in %s", time.Since(started))
 
-	started = time.Now()
-	if err := e.Runtime.CollectTrace(ctx, time.Second); err != nil {
-		_ = e.Runtime.Process.Stop()
-		<-done
-		return err
-	}
-	log.Printf("senbon: trace collected in %s", time.Since(started))
 	if err := e.Runtime.CollectMetrics(ctx); err != nil {
 		_ = e.Runtime.Process.Stop()
 		<-done

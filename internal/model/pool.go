@@ -2,9 +2,6 @@ package model
 
 import (
 	"sync"
-
-	runtimemetrics "github.com/briheet/senbon/internal/runtime/metrics"
-	stdruntimemetrics "runtime/metrics"
 )
 
 const maxPooledMapEntries = 4096
@@ -24,10 +21,10 @@ var (
 		return make(CodeMetrics)
 	}}
 	metricsUpdates = sync.Pool{New: func() any {
-		return new(runtimemetrics.RuntimeMetrics)
+		return new(RuntimeMetrics)
 	}}
 	histogramUpdates = sync.Pool{New: func() any {
-		return new(stdruntimemetrics.Float64Histogram)
+		return new(Histogram)
 	}}
 )
 
@@ -47,25 +44,25 @@ func acquireCodeMetrics() CodeMetrics {
 	return codeMetricsMaps.Get().(CodeMetrics)
 }
 
-func copyMetrics(source *runtimemetrics.RuntimeMetrics) *runtimemetrics.RuntimeMetrics {
-	target := metricsUpdates.Get().(*runtimemetrics.RuntimeMetrics)
+func copyMetrics(source *RuntimeMetrics) *RuntimeMetrics {
+	target := metricsUpdates.Get().(*RuntimeMetrics)
 	*target = *source
 	target.SchedulerLatency = copyHistogram(source.SchedulerLatency)
 	target.GCPauses = copyHistogram(source.GCPauses)
 	return target
 }
 
-func copyHistogram(source *stdruntimemetrics.Float64Histogram) *stdruntimemetrics.Float64Histogram {
+func copyHistogram(source *Histogram) *Histogram {
 	if source == nil {
 		return nil
 	}
-	target := histogramUpdates.Get().(*stdruntimemetrics.Float64Histogram)
+	target := histogramUpdates.Get().(*Histogram)
 	target.Counts = append(target.Counts[:0], source.Counts...)
 	target.Buckets = append(target.Buckets[:0], source.Buckets...)
 	return target
 }
 
-func assignMetrics(target, source *runtimemetrics.RuntimeMetrics) {
+func assignMetrics(target, source *RuntimeMetrics) {
 	schedulerLatency := target.SchedulerLatency
 	gcPauses := target.GCPauses
 	*target = *source
@@ -73,12 +70,12 @@ func assignMetrics(target, source *runtimemetrics.RuntimeMetrics) {
 	target.GCPauses = assignHistogram(gcPauses, source.GCPauses)
 }
 
-func assignHistogram(target, source *stdruntimemetrics.Float64Histogram) *stdruntimemetrics.Float64Histogram {
+func assignHistogram(target, source *Histogram) *Histogram {
 	if source == nil {
 		return nil
 	}
 	if target == nil {
-		target = new(stdruntimemetrics.Float64Histogram)
+		target = new(Histogram)
 	}
 	target.Counts = append(target.Counts[:0], source.Counts...)
 	target.Buckets = append(target.Buckets[:0], source.Buckets...)
@@ -136,14 +133,14 @@ func releaseCodeMetrics(metrics CodeMetrics) {
 	codeMetricsMaps.Put(metrics)
 }
 
-func releaseMetrics(metrics *runtimemetrics.RuntimeMetrics) {
+func releaseMetrics(metrics *RuntimeMetrics) {
 	releaseHistogram(metrics.SchedulerLatency)
 	releaseHistogram(metrics.GCPauses)
-	*metrics = runtimemetrics.RuntimeMetrics{}
+	*metrics = RuntimeMetrics{}
 	metricsUpdates.Put(metrics)
 }
 
-func releaseHistogram(histogram *stdruntimemetrics.Float64Histogram) {
+func releaseHistogram(histogram *Histogram) {
 	if histogram == nil {
 		return
 	}

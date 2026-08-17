@@ -7,252 +7,45 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/briheet/senbon/internal/model"
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
 
-// PackageID uniquely identifies a package within a Graph.
-type PackageID uint64
-
-// NodeID uniquely identifies a function node within a Graph.
-type NodeID uint64
-
-// FileID uniquely identifies a source file within a Graph.
-type FileID uint64
-
-// BlockID identifies an SSA basic block within its function.
-type BlockID uint64
-
-// SyntaxKind identifies the source syntax that defines a function node.
-type SyntaxKind uint8
-
-const (
-	// SyntaxFuncDecl represents a declared function or method.
-	SyntaxFuncDecl SyntaxKind = iota
-	// SyntaxFuncLit represents an anonymous function literal.
-	SyntaxFuncLit
-	// SyntaxRange represents a synthetic function created for a range statement.
-	SyntaxRange
+type (
+	Graph        = model.StaticGraph
+	Node         = model.StaticNode
+	File         = model.StaticFile
+	PackageID    = model.PackageID
+	NodeID       = model.NodeID
+	FileID       = model.FileID
+	BlockID      = model.BlockID
+	SyntaxKind   = model.SyntaxKind
+	Position     = model.Position
+	ObjectFunc   = model.ObjectFunc
+	Signature    = model.Signature
+	Param        = model.Param
+	Package      = model.Package
+	TypeInfo     = model.TypeInfo
+	Selection    = model.Selection
+	FunctionBody = model.FunctionBody
+	Variable     = model.Variable
+	TypeParam    = model.TypeParam
+	Type         = model.Type
+	Block        = model.Block
+	Instruction  = model.Instruction
+	Syntax       = model.Syntax
+	Program      = model.Program
+	MethodSet    = model.MethodSet
 )
 
-// Graph is Senbon's internal representation of an analyzed program.
-type Graph struct {
-	Root     NodeID                 // Root Node of the graph
-	Nodes    map[NodeID]*Node       // Functions to functions based Node mapping
-	Files    map[FileID]*File       // Files having function metadata and files to files mapping
-	Packages map[PackageID]*Package // Program packages
-	Program  Program                // enclosing program
-}
-
-// Node represents a function or method and its call and control-flow metadata.
-type Node struct {
-	Name      string      // Function based infos
-	ID        NodeID      // Node ID
-	Object    *ObjectFunc // Base objects func
-	Signature Signature   // Function sig
-	Synthetic string      // SOurce info if synthetic fuinction
-
-	Syntax    Syntax   // Ast stuff
-	Info      TypeInfo // type annotations
-	GoVersion string
-
-	Parent *NodeID   // enclosing function if so
-	Pkg    PackageID // enclosing package
-
-	Function FunctionBody // Functionbody fields
-
-	In  []NodeID // incoming edges
-	Out []NodeID // outgoing edges
-}
-
-// Program describes the files, packages, and method sets in the graph.
-type Program struct {
-	Files      []FileID
-	Packages   []PackageID
-	BuildMode  string
-	MethodSets []MethodSet
-}
-
-// MethodSet associates a runtime type with its reachable methods.
-type MethodSet struct {
-	Type    string
-	Methods []NodeID
-}
-
-// Syntax describes the source syntax that produced a function node.
-type Syntax struct {
-	Kind  SyntaxKind
-	File  FileID
-	Start Position
-	End   Position
-}
-
-// Position identifies a location in a source file.
-type Position struct {
-	Line   int
-	Column int
-	Offset int
-}
-
-// ObjectFunc describes the type-checker object behind a function.
-type ObjectFunc struct {
-	Name   string      // FullName of the package or reciever
-	Origin *ObjectFunc // Canonical func for its reciever
-	Pkg    PackageID   // Package which this function belongs to
-}
-
-// Signature describes a function or method signature.
-type Signature struct {
-	Receiver   string   // If method or nil
-	Params     []Param  // Parameters of a signature
-	Results    []Param  // results of a signatire
-	Variadic   bool     // Vardic or not
-	TypeParams []string // Type params
-
-}
-
-// Param describes a named parameter or result.
-type Param struct {
-	Name string
-	Type string
-}
-
-// Package describes an analyzed Go package.
-type Package struct {
-	Path string
-	Name string
-}
-
-// TypeInfo contains type-checker metadata associated with a node.
-type TypeInfo struct {
-	Type      string
-	Object    string
-	Package   string
-	Selection *Selection
-}
-
-// Selection describes a field or method selection.
-type Selection struct {
-	Kind     string
-	Receiver string
-	Object   string
-	Indirect bool
-	Index    []int
-}
-
-// FunctionBody contains the SSA body and generic metadata of a function.
-type FunctionBody struct {
-	FreeVars  []Variable // closure supplied vcars
-	Locals    []Variable // frame allocated vars
-	Blocks    []Block    // basic blocks of function
-	Recover   *BlockID
-	AnonFuncs []NodeID // as the name suggests
-
-	TypeArgs       []Type
-	RecvTypeParams []TypeParam
-	RecvTypeArgs   []Type
-
-	Origin *NodeID
-}
-
-// Variable describes a named SSA variable and its type.
-type Variable struct {
-	Name string
-	Type string
-}
-
-// TypeParam describes a generic type parameter and its constraint.
-type TypeParam struct {
-	Name       string
-	Constraint string
-}
-
-// Type contains the string representation of a Go type.
-type Type struct {
-	Name string
-}
-
-// Block represents an SSA basic block and its control-flow edges.
-type Block struct {
-	ID           BlockID
-	Index        int
-	Comment      string
-	Instructions []Instruction
-	Pred         []BlockID
-	Succ         []BlockID
-}
-
-// Instruction describes an SSA instruction and its source position.
-type Instruction struct {
-	Op       string
-	Position Position
-}
-
-// File describes a source file, its functions, and cross-file call relationships.
-type File struct {
-	ID        FileID    // fileID
-	Path      string    // path to file
-	Package   PackageID // packages in the file
-	Functions []NodeID  // functions and methods present in the file
-
-	Calls    []FileID // which file has called
-	CalledBy []FileID // who is this file calling
-}
-
-// Node returns the node with the given ID, or nil if it does not exist.
-func (g *Graph) Node(id NodeID) *Node {
-	return g.Nodes[id]
-}
-
-// Children returns the nodes called by the given node.
-func (g *Graph) Children(id NodeID) []*Node {
-	node := g.Node(id)
-	if node == nil {
-		return nil
-	}
-
-	children := make([]*Node, 0, len(node.Out))
-	for _, childID := range node.Out {
-		if child := g.Node(childID); child != nil {
-			children = append(children, child)
-		}
-	}
-	return children
-}
-
-// Parents returns the nodes that call the given node.
-func (g *Graph) Parents(id NodeID) []*Node {
-	node := g.Node(id)
-	if node == nil {
-		return nil
-	}
-
-	parents := make([]*Node, 0, len(node.In))
-	for _, parentID := range node.In {
-		if parent := g.Node(parentID); parent != nil {
-			parents = append(parents, parent)
-		}
-	}
-	return parents
-}
-
-// FileFunctions returns the function nodes declared in the given file.
-func (g *Graph) FileFunctions(id FileID) []*Node {
-	file := g.Files[id]
-	if file == nil {
-		return nil
-	}
-
-	functions := make([]*Node, 0, len(file.Functions))
-	for _, functionID := range file.Functions {
-		if function := g.Node(functionID); function != nil {
-			functions = append(functions, function)
-		}
-	}
-	return functions
-}
+const (
+	SyntaxFuncDecl = model.SyntaxFuncDecl
+	SyntaxFuncLit  = model.SyntaxFuncLit
+	SyntaxRange    = model.SyntaxRange
+)
 
 func GetGraph(pkgs []*packages.Package) (*Graph, error) {
 	// build ssa package and get main

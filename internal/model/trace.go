@@ -3,21 +3,19 @@ package model
 import (
 	"sync"
 	"time"
-
-	runtimetrace "github.com/briheet/senbon/internal/runtime/trace"
 )
 
 const maxPooledResources = 4096
 
 type resourceState struct {
-	state runtimetrace.State
+	state State
 	since time.Duration
-	stack runtimetrace.StackID
+	stack StackID
 	live  bool
 }
 
 type rangeKey struct {
-	kind runtimetrace.ResourceKind
+	kind ResourceKind
 	id   int64
 	name string
 }
@@ -41,7 +39,7 @@ var (
 	resourceStates = sync.Pool{New: func() any { return new(resourceState) }}
 )
 
-func (g *RuntimeGraph) buildTrace(trace *runtimetrace.Trace) *TraceUpdate {
+func (g *RuntimeGraph) buildTrace(trace *Trace) *TraceUpdate {
 	update := acquireTraceUpdate()
 	if trace == nil {
 		return update
@@ -69,30 +67,30 @@ func (g *RuntimeGraph) buildTrace(trace *runtimetrace.Trace) *TraceUpdate {
 		}
 
 		switch event.Kind {
-		case runtimetrace.EventMetric:
+		case EventMetric:
 			update.Summary.Metrics[event.Name] = event.Value
-		case runtimetrace.EventStackSample:
+		case EventStackSample:
 			update.Summary.StackSamples++
 			nodes, files := g.mapper.traceTargets(trace, event.Stack, targets)
 			update.Code.add(Metric{Source: TraceSource, Name: traceSamples, Unit: unitCount}, 1, nodes, files)
-		case runtimetrace.EventRangeBegin, runtimetrace.EventRangeActive:
+		case EventRangeBegin, EventRangeActive:
 			workspace.ranges[rangeKey{kind: event.Resource.Kind, id: event.Resource.ID, name: event.Name}] = event.At
-		case runtimetrace.EventRangeEnd:
+		case EventRangeEnd:
 			key := rangeKey{kind: event.Resource.Kind, id: event.Resource.ID, name: event.Name}
 			if start, ok := workspace.ranges[key]; ok && event.At >= start {
 				update.Summary.Ranges[event.Name] += event.At - start
 				delete(workspace.ranges, key)
 			}
-		case runtimetrace.EventStateTransition:
+		case EventStateTransition:
 			switch event.Resource.Kind {
-			case runtimetrace.ResourceGoroutine:
+			case ResourceGoroutine:
 				state := workspace.goroutines[event.Resource.ID]
 				if state == nil {
 					state = resourceStates.Get().(*resourceState)
 					workspace.goroutines[event.Resource.ID] = state
 				}
 				g.closeGoroutineState(update, trace, state, event.At, targets)
-				if event.To == runtimetrace.StateNotExist {
+				if event.To == StateNotExist {
 					if state.live {
 						state.live = false
 						live--
@@ -110,7 +108,7 @@ func (g *RuntimeGraph) buildTrace(trace *runtimetrace.Trace) *TraceUpdate {
 				if state.stack == 0 && event.Goroutine == event.Resource.ID {
 					state.stack = event.Stack
 				}
-			case runtimetrace.ResourceProcessor:
+			case ResourceProcessor:
 				state := workspace.processors[event.Resource.ID]
 				if state == nil {
 					state = resourceStates.Get().(*resourceState)
@@ -119,7 +117,7 @@ func (g *RuntimeGraph) buildTrace(trace *runtimetrace.Trace) *TraceUpdate {
 				closeProcessorState(&update.Summary, state, event.At)
 				state.state = event.To
 				state.since = event.At
-			case runtimetrace.ResourceThread:
+			case ResourceThread:
 				if event.Resource.ID >= 0 {
 					workspace.threads[event.Resource.ID] = struct{}{}
 				}
@@ -145,13 +143,13 @@ func (g *RuntimeGraph) buildTrace(trace *runtimetrace.Trace) *TraceUpdate {
 	return update
 }
 
-func (g *RuntimeGraph) closeGoroutineState(update *TraceUpdate, trace *runtimetrace.Trace, state *resourceState, at time.Duration, targets *targetWorkspace) {
-	if at < state.since || state.state == runtimetrace.StateUnknown || state.state == runtimetrace.StateNotExist {
+func (g *RuntimeGraph) closeGoroutineState(update *TraceUpdate, trace *Trace, state *resourceState, at time.Duration, targets *targetWorkspace) {
+	if at < state.since || state.state == StateUnknown || state.state == StateNotExist {
 		return
 	}
 	duration := at - state.since
 	update.Summary.GoroutineStates[state.state] += duration
-	if duration == 0 || state.state != runtimetrace.StateRunnable && state.state != runtimetrace.StateWaiting && state.state != runtimetrace.StateSyscall {
+	if duration == 0 || state.state != StateRunnable && state.state != StateWaiting && state.state != StateSyscall {
 		return
 	}
 	nodes, files := g.mapper.traceTargets(trace, state.stack, targets)
@@ -159,7 +157,7 @@ func (g *RuntimeGraph) closeGoroutineState(update *TraceUpdate, trace *runtimetr
 }
 
 func closeProcessorState(summary *TraceSummary, state *resourceState, at time.Duration) {
-	if at < state.since || state.state == runtimetrace.StateUnknown || state.state == runtimetrace.StateNotExist {
+	if at < state.since || state.state == StateUnknown || state.state == StateNotExist {
 		return
 	}
 	summary.ProcessorStates[state.state] += at - state.since

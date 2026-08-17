@@ -1,4 +1,5 @@
-package engine
+// Package golang integrates Go source analysis and runtime collection.
+package golang
 
 import (
 	"context"
@@ -7,8 +8,31 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/briheet/senbon/internal/adapters"
+	"github.com/briheet/senbon/internal/adapters/golang/analysis"
+	"github.com/briheet/senbon/internal/model"
 	"golang.org/x/tools/go/packages"
 )
+
+const currentDirectory = "."
+
+// Adapter analyzes Go applications.
+type Adapter struct{}
+
+var _ adapters.Analyzer = (*Adapter)(nil)
+
+// Analyze loads and converts a Go application into the normalized graph.
+func (*Adapter) Analyze(ctx context.Context, sourcePath string) (*model.StaticGraph, string, error) {
+	packages, err := LoadPackages(ctx, sourcePath)
+	if err != nil {
+		return nil, "", err
+	}
+	graph, err := analysis.GetGraph(packages)
+	if err != nil {
+		return nil, "", err
+	}
+	return graph, packages[0].Module.Path, nil
+}
 
 // Go packages error
 type PackageError struct {
@@ -42,7 +66,7 @@ func (e *PackageErrors) Error() string {
 }
 
 // This function helps with setting required config, loading source info
-func loadPackages(ctx context.Context, sourcePath string) ([]*packages.Package, error) {
+func LoadPackages(ctx context.Context, sourcePath string) ([]*packages.Package, error) {
 	// Build config and loading packages
 	pkgConfig := packages.Config{
 		Mode:    packages.LoadAllSyntax | packages.NeedModule,
@@ -51,7 +75,7 @@ func loadPackages(ctx context.Context, sourcePath string) ([]*packages.Package, 
 	}
 
 	// Pattern resolves to Config.Dir's source dir
-	pkgs, err := packages.Load(&pkgConfig, CwdLimiter)
+	pkgs, err := packages.Load(&pkgConfig, currentDirectory)
 	if err != nil {
 		return nil, err
 	}

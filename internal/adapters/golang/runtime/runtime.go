@@ -11,10 +11,11 @@ import (
 	"strconv"
 	"time"
 
-	runtimemetrics "github.com/briheet/senbon/internal/runtime/metrics"
-	runtimepprof "github.com/briheet/senbon/internal/runtime/pprof"
-	runtimeprocess "github.com/briheet/senbon/internal/runtime/process"
-	runtimetrace "github.com/briheet/senbon/internal/runtime/trace"
+	"github.com/briheet/senbon/internal/adapters"
+	runtimemetrics "github.com/briheet/senbon/internal/adapters/golang/runtime/metrics"
+	runtimepprof "github.com/briheet/senbon/internal/adapters/golang/runtime/pprof"
+	runtimeprocess "github.com/briheet/senbon/internal/adapters/golang/runtime/process"
+	runtimetrace "github.com/briheet/senbon/internal/adapters/golang/runtime/trace"
 )
 
 // Runtime owns a target process and its collected runtime data.
@@ -26,6 +27,12 @@ type Runtime struct {
 
 	client *http.Client
 }
+
+var (
+	_ adapters.MetricsCollector = (*Runtime)(nil)
+	_ adapters.Profiler         = (*Runtime)(nil)
+	_ adapters.Tracer           = (*Runtime)(nil)
+)
 
 const (
 	metricsPath  = "/debug/senbon/metrics"

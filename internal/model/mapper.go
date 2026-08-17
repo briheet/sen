@@ -4,10 +4,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-
-	graph "github.com/briheet/senbon/internal/analysis"
-	runtimepprof "github.com/briheet/senbon/internal/runtime/pprof"
-	runtimetrace "github.com/briheet/senbon/internal/runtime/trace"
 )
 
 type sourceFrame struct {
@@ -22,30 +18,30 @@ const (
 
 type targetWorkspace struct {
 	frames    []sourceFrame
-	nodes     []graph.NodeID
-	files     []graph.FileID
-	seenNodes map[graph.NodeID]struct{}
-	seenFiles map[graph.FileID]struct{}
+	nodes     []NodeID
+	files     []FileID
+	seenNodes map[NodeID]struct{}
+	seenFiles map[FileID]struct{}
 }
 
 var targetWorkspaces = sync.Pool{New: func() any {
 	return &targetWorkspace{
-		seenNodes: make(map[graph.NodeID]struct{}),
-		seenFiles: make(map[graph.FileID]struct{}),
+		seenNodes: make(map[NodeID]struct{}),
+		seenFiles: make(map[FileID]struct{}),
 	}
 }}
 
 type frameMapper struct {
-	static   *graph.Graph
-	paths    map[string]graph.FileID
-	relative map[graph.FileID]string
+	static   *StaticGraph
+	paths    map[string]FileID
+	relative map[FileID]string
 }
 
-func newMapper(modulePath string, static *graph.Graph, result *RuntimeGraph) *frameMapper {
+func newMapper(modulePath string, static *StaticGraph, result *RuntimeGraph) *frameMapper {
 	mapper := &frameMapper{
 		static:   static,
-		paths:    make(map[string]graph.FileID),
-		relative: make(map[graph.FileID]string),
+		paths:    make(map[string]FileID),
+		relative: make(map[FileID]string),
 	}
 	for id, file := range static.Files {
 		pkg := static.Packages[file.Package]
@@ -70,7 +66,7 @@ func newMapper(modulePath string, static *graph.Graph, result *RuntimeGraph) *fr
 	return mapper
 }
 
-func (m *frameMapper) profileTargets(profile *runtimepprof.Profile, sample runtimepprof.Sample, workspace *targetWorkspace) ([]graph.NodeID, []graph.FileID) {
+func (m *frameMapper) profileTargets(profile *Profile, sample ProfileSample, workspace *targetWorkspace) ([]NodeID, []FileID) {
 	workspace.reset()
 	for _, id := range sample.Stack {
 		location, ok := profile.Locations[id]
@@ -84,7 +80,7 @@ func (m *frameMapper) profileTargets(profile *runtimepprof.Profile, sample runti
 	return m.targets(workspace)
 }
 
-func (m *frameMapper) traceTargets(trace *runtimetrace.Trace, stackID runtimetrace.StackID, workspace *targetWorkspace) ([]graph.NodeID, []graph.FileID) {
+func (m *frameMapper) traceTargets(trace *Trace, stackID StackID, workspace *targetWorkspace) ([]NodeID, []FileID) {
 	workspace.reset()
 	stack, ok := trace.Stacks[stackID]
 	if !ok {
@@ -96,7 +92,7 @@ func (m *frameMapper) traceTargets(trace *runtimetrace.Trace, stackID runtimetra
 	return m.targets(workspace)
 }
 
-func (m *frameMapper) targets(workspace *targetWorkspace) ([]graph.NodeID, []graph.FileID) {
+func (m *frameMapper) targets(workspace *targetWorkspace) ([]NodeID, []FileID) {
 	for _, frame := range workspace.frames {
 		fileID, ok := m.file(frame.file)
 		if !ok {
@@ -139,18 +135,18 @@ func (workspace *targetWorkspace) reset() {
 	workspace.nodes = workspace.nodes[:0]
 	workspace.files = workspace.files[:0]
 	if len(workspace.seenNodes) > maxPooledTargets {
-		workspace.seenNodes = make(map[graph.NodeID]struct{})
+		workspace.seenNodes = make(map[NodeID]struct{})
 	} else {
 		clear(workspace.seenNodes)
 	}
 	if len(workspace.seenFiles) > maxPooledTargets {
-		workspace.seenFiles = make(map[graph.FileID]struct{})
+		workspace.seenFiles = make(map[FileID]struct{})
 	} else {
 		clear(workspace.seenFiles)
 	}
 }
 
-func (m *frameMapper) file(path string) (graph.FileID, bool) {
+func (m *frameMapper) file(path string) (FileID, bool) {
 	if path == "" {
 		return 0, false
 	}
@@ -160,7 +156,7 @@ func (m *frameMapper) file(path string) (graph.FileID, bool) {
 	}
 
 	candidate := filepath.ToSlash(filepath.Clean(path))
-	var match graph.FileID
+	var match FileID
 	longest := 0
 	for id, relative := range m.relative {
 		if candidate == relative || strings.HasSuffix(candidate, "/"+relative) {
@@ -173,12 +169,12 @@ func (m *frameMapper) file(path string) (graph.FileID, bool) {
 	return match, match != 0
 }
 
-func (m *frameMapper) node(fileID graph.FileID, line int64) (graph.NodeID, bool) {
+func (m *frameMapper) node(fileID FileID, line int64) (NodeID, bool) {
 	file := m.static.Files[fileID]
 	if file == nil || line <= 0 {
 		return 0, false
 	}
-	var match graph.NodeID
+	var match NodeID
 	bestSpan := int(^uint(0) >> 1)
 	bestColumn := -1
 	for _, id := range file.Functions {

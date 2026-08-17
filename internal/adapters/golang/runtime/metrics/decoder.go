@@ -4,6 +4,8 @@ import (
 	"encoding/gob"
 	"io"
 	runtimemetrics "runtime/metrics"
+
+	"github.com/briheet/senbon/internal/model"
 )
 
 type wireMetric struct {
@@ -52,9 +54,15 @@ func Read(reader io.Reader) (*RuntimeMetrics, error) {
 		case MetricsThreads:
 			result.Threads = sample.Uint64
 		case MetricsSchedulerLatency:
-			result.SchedulerLatency = sample.Histogram
+			result.SchedulerLatency = &model.Histogram{
+				Counts:  append([]uint64(nil), sample.Histogram.Counts...),
+				Buckets: append([]float64(nil), sample.Histogram.Buckets...),
+			}
 		case MetricsGCPauses:
-			result.GCPauses = sample.Histogram
+			result.GCPauses = &model.Histogram{
+				Counts:  append([]uint64(nil), sample.Histogram.Counts...),
+				Buckets: append([]float64(nil), sample.Histogram.Buckets...),
+			}
 		case MetricsLockContention:
 			result.LockContention = sample.Float64
 		}

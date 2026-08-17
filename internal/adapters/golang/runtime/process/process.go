@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/briheet/senbon/internal/adapters"
 )
 
 const (
@@ -24,6 +26,8 @@ type Process struct {
 	started         chan struct{}
 	startErr        error
 }
+
+var _ adapters.Runner = (*Process)(nil)
 
 // NewProcess builds the target program with the Senbon overlay.
 func NewProcess(ctx context.Context, sourceDir string) (process *Process, err error) {

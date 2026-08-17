@@ -1,9 +1,39 @@
-// Package trace defines Senbon's representation of a Go runtime trace.
-package trace
+package model
 
 import "time"
 
-// EventKind identifies a runtime trace event.
+// Histogram contains bucket boundaries and their counts.
+type Histogram struct {
+	Counts  []uint64
+	Buckets []float64
+}
+
+// RuntimeMetrics contains process-wide runtime measurements.
+type RuntimeMetrics struct {
+	UserCPU  float64
+	GCCPU    float64
+	GCCycles uint64
+
+	HeapAlloc       uint64
+	AllocCount      uint64
+	LiveHeap        uint64
+	CurrHeapObjects uint64
+
+	TotalRuntimeMem uint64
+	StackMemory     uint64
+
+	TotalLiveGoroutines uint64
+	RunningGoroutines   uint64
+	RunnableGoroutines  uint64
+	WaitingGoroutines   uint64
+	Threads             uint64
+
+	SchedulerLatency *Histogram
+	GCPauses         *Histogram
+	LockContention   float64
+}
+
+// EventKind identifies a runtime event.
 type EventKind string
 
 const (
@@ -22,7 +52,7 @@ const (
 	EventStateTransition EventKind = "state-transition"
 )
 
-// State is a goroutine or processor execution state.
+// State identifies an execution state.
 type State string
 
 const (
@@ -45,17 +75,17 @@ const (
 	ResourceThread    ResourceKind = "thread"
 )
 
-// StackID identifies a deduplicated stack in a trace.
+// StackID identifies a deduplicated trace stack.
 type StackID uint64
 
 // Trace contains decoded events and their shared stacks.
 type Trace struct {
 	Duration time.Duration
 	Events   []Event
-	Stacks   map[StackID]Stack
+	Stacks   map[StackID]TraceStack
 }
 
-// Event contains the common and kind-specific data of a trace event.
+// Event contains common and event-specific runtime data.
 type Event struct {
 	At        time.Duration
 	Kind      EventKind
@@ -78,19 +108,19 @@ type Event struct {
 	Value    uint64
 }
 
-// Resource identifies the goroutine, processor, or thread affected by an event.
+// Resource identifies a runtime resource affected by an event.
 type Resource struct {
 	Kind ResourceKind
 	ID   int64
 }
 
-// Stack is a sequence of call frames, starting with the leaf frame.
-type Stack struct {
-	Frames []Frame
+// TraceStack is a leaf-first sequence of runtime frames.
+type TraceStack struct {
+	Frames []TraceFrame
 }
 
-// Frame identifies one function call in a stack.
-type Frame struct {
+// TraceFrame identifies one function call in a runtime stack.
+type TraceFrame struct {
 	PC       uint64
 	Function string
 	File     string

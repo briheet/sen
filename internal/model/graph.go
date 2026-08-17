@@ -4,12 +4,6 @@ package model
 import (
 	"maps"
 	"time"
-
-	graph "github.com/briheet/senbon/internal/analysis"
-	"github.com/briheet/senbon/internal/runtime"
-	runtimemetrics "github.com/briheet/senbon/internal/runtime/metrics"
-	runtimepprof "github.com/briheet/senbon/internal/runtime/pprof"
-	runtimetrace "github.com/briheet/senbon/internal/runtime/trace"
 )
 
 const (
@@ -22,9 +16,9 @@ const (
 
 // RuntimeGraph is the TUI-owned view of static and observed program data.
 type RuntimeGraph struct {
-	Static   *graph.Graph
-	Nodes    map[graph.NodeID]*Node
-	Files    map[graph.FileID]*File
+	Static   *StaticGraph
+	Nodes    map[NodeID]*Node
+	Files    map[FileID]*File
 	Global   Global
 	Unmapped map[Metric]int64
 
@@ -33,13 +27,13 @@ type RuntimeGraph struct {
 
 // Node combines a static function node with its runtime costs.
 type Node struct {
-	Static  *graph.Node
+	Static  *StaticNode
 	Metrics CodeMetrics
 }
 
 // File combines a static source file with its runtime costs.
 type File struct {
-	Static  *graph.File
+	Static  *StaticFile
 	Metrics CodeMetrics
 }
 
@@ -61,7 +55,7 @@ type CodeMetrics map[Metric]Cost
 
 // Global contains process-wide data that cannot be assigned to source code.
 type Global struct {
-	Process          runtimemetrics.RuntimeMetrics
+	Process          RuntimeMetrics
 	ProfileTotals    map[Metric]int64
 	ProfileDurations map[string]time.Duration
 	Trace            TraceSummary
@@ -76,8 +70,8 @@ type TraceSummary struct {
 	Processors      uint64
 	Threads         uint64
 	StackSamples    uint64
-	GoroutineStates map[runtimetrace.State]time.Duration
-	ProcessorStates map[runtimetrace.State]time.Duration
+	GoroutineStates map[State]time.Duration
+	ProcessorStates map[State]time.Duration
 	Ranges          map[string]time.Duration
 	Metrics         map[string]uint64
 }
@@ -85,7 +79,7 @@ type TraceSummary struct {
 // RuntimeUpdate transfers ownership of one or more completed runtime snapshots.
 type RuntimeUpdate struct {
 	Reset    bool
-	Metrics  *runtimemetrics.RuntimeMetrics
+	Metrics  *RuntimeMetrics
 	Profiles map[string]*ProfileUpdate
 	Trace    *TraceUpdate
 }
@@ -105,17 +99,17 @@ type TraceUpdate struct {
 
 // CodeUpdate contains runtime costs grouped by static graph identity.
 type CodeUpdate struct {
-	Nodes    map[graph.NodeID]CodeMetrics
-	Files    map[graph.FileID]CodeMetrics
+	Nodes    map[NodeID]CodeMetrics
+	Files    map[FileID]CodeMetrics
 	Unmapped map[Metric]int64
 }
 
 // BuildRuntimeGraph allocates the main module's stable model owned by the TUI.
-func BuildRuntimeGraph(modulePath string, static *graph.Graph) *RuntimeGraph {
+func BuildRuntimeGraph(modulePath string, static *StaticGraph) *RuntimeGraph {
 	result := &RuntimeGraph{
 		Static:   static,
-		Nodes:    make(map[graph.NodeID]*Node),
-		Files:    make(map[graph.FileID]*File),
+		Nodes:    make(map[NodeID]*Node),
+		Files:    make(map[FileID]*File),
 		Unmapped: make(map[Metric]int64),
 		Global: Global{
 			ProfileTotals:    make(map[Metric]int64),
@@ -128,34 +122,34 @@ func BuildRuntimeGraph(modulePath string, static *graph.Graph) *RuntimeGraph {
 }
 
 // BuildUpdate aggregates a complete runtime snapshot without mutating the graph.
-func (g *RuntimeGraph) BuildUpdate(observed *runtime.Runtime) RuntimeUpdate {
-	update := RuntimeUpdate{Reset: true, Metrics: copyMetrics(observed.Metrics)}
-	if len(observed.Profiles) != 0 {
+func (g *RuntimeGraph) BuildUpdate(metrics *RuntimeMetrics, profiles map[string]*Profile, trace *Trace) RuntimeUpdate {
+	update := RuntimeUpdate{Reset: true, Metrics: copyMetrics(metrics)}
+	if len(profiles) != 0 {
 		update.Profiles = acquireProfileMap()
-		for name, profile := range observed.Profiles {
+		for name, profile := range profiles {
 			update.Profiles[name] = g.buildProfile(name, profile)
 		}
 	}
-	if observed.Trace != nil {
-		update.Trace = g.buildTrace(observed.Trace)
+	if trace != nil {
+		update.Trace = g.buildTrace(trace)
 	}
 	return update
 }
 
 // BuildMetricsUpdate aggregates a process-metrics snapshot.
-func (g *RuntimeGraph) BuildMetricsUpdate(metrics *runtimemetrics.RuntimeMetrics) RuntimeUpdate {
+func (g *RuntimeGraph) BuildMetricsUpdate(metrics *RuntimeMetrics) RuntimeUpdate {
 	return RuntimeUpdate{Metrics: copyMetrics(metrics)}
 }
 
 // BuildProfileUpdate aggregates one named profile.
-func (g *RuntimeGraph) BuildProfileUpdate(name string, profile *runtimepprof.Profile) RuntimeUpdate {
+func (g *RuntimeGraph) BuildProfileUpdate(name string, profile *Profile) RuntimeUpdate {
 	profiles := acquireProfileMap()
 	profiles[name] = g.buildProfile(name, profile)
 	return RuntimeUpdate{Profiles: profiles}
 }
 
 // BuildTraceUpdate aggregates one runtime trace.
-func (g *RuntimeGraph) BuildTraceUpdate(trace *runtimetrace.Trace) RuntimeUpdate {
+func (g *RuntimeGraph) BuildTraceUpdate(trace *Trace) RuntimeUpdate {
 	return RuntimeUpdate{Trace: g.buildTrace(trace)}
 }
 
@@ -167,7 +161,7 @@ func (g *RuntimeGraph) ApplyUpdate(update RuntimeUpdate) {
 	if update.Metrics != nil {
 		assignMetrics(&g.Global.Process, update.Metrics)
 	} else if update.Reset {
-		g.Global.Process = runtimemetrics.RuntimeMetrics{}
+		g.Global.Process = RuntimeMetrics{}
 	}
 	for name, profile := range update.Profiles {
 		if !update.Reset {
@@ -265,8 +259,8 @@ func (g *RuntimeGraph) copyTrace(source TraceSummary) {
 
 func newTraceSummary() TraceSummary {
 	return TraceSummary{
-		GoroutineStates: make(map[runtimetrace.State]time.Duration),
-		ProcessorStates: make(map[runtimetrace.State]time.Duration),
+		GoroutineStates: make(map[State]time.Duration),
+		ProcessorStates: make(map[State]time.Duration),
 		Ranges:          make(map[string]time.Duration),
 		Metrics:         make(map[string]uint64),
 	}
@@ -274,13 +268,13 @@ func newTraceSummary() TraceSummary {
 
 func newCodeUpdate() CodeUpdate {
 	return CodeUpdate{
-		Nodes:    make(map[graph.NodeID]CodeMetrics),
-		Files:    make(map[graph.FileID]CodeMetrics),
+		Nodes:    make(map[NodeID]CodeMetrics),
+		Files:    make(map[FileID]CodeMetrics),
 		Unmapped: make(map[Metric]int64),
 	}
 }
 
-func (u *CodeUpdate) add(metric Metric, value int64, nodes []graph.NodeID, files []graph.FileID) {
+func (u *CodeUpdate) add(metric Metric, value int64, nodes []NodeID, files []FileID) {
 	if len(files) == 0 {
 		u.Unmapped[metric] += value
 	}
@@ -312,7 +306,7 @@ func (u *CodeUpdate) add(metric Metric, value int64, nodes []graph.NodeID, files
 	}
 }
 
-func (g *RuntimeGraph) buildProfile(name string, profile *runtimepprof.Profile) *ProfileUpdate {
+func (g *RuntimeGraph) buildProfile(name string, profile *Profile) *ProfileUpdate {
 	if profile == nil {
 		return nil
 	}
