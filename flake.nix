@@ -11,6 +11,7 @@
         packages = with pkgs; [
           go
           redis
+          postgresql
         ];
       };
     }) inputs.nixpkgs.legacyPackages;

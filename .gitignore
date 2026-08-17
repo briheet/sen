@@ -4,3 +4,5 @@ bin/
 *.pprof
 node_modules/
 *.DS_Store
+.pgtest/
+.workload.sql

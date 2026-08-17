@@ -21,6 +21,8 @@ const (
 	NodeTarget = "node"
 	// RedisTarget identifies the Redis adapter.
 	RedisTarget = "redis"
+	// PostgresTarget identifies the PostgreSQL adapter.
+	PostgresTarget = "postgres"
 )
 
 // Analyzer builds a normalized static graph and returns its source namespace.

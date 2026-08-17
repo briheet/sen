@@ -44,6 +44,8 @@ const (
 	ServiceLangGo ServiceLang = "go"
 	// ServiceLangNode identifies the Node.js server adapter.
 	ServiceLangNode ServiceLang = "node"
+	// ServiceLangPostgres identifies a PostgreSQL server adapter.
+	ServiceLangPostgres ServiceLang = "postgres"
 )
 
 // ServiceProvider identifies an external service implementation.
@@ -69,7 +71,7 @@ type Project struct {
 type Service struct {
 	Name      string          `mapstructure:"name" validate:"required"`
 	Type      ServiceType     `mapstructure:"type" validate:"required,oneof=server kv"`
-	Lang      ServiceLang     `mapstructure:"lang" validate:"omitempty,oneof=go node"`
+	Lang      ServiceLang     `mapstructure:"lang" validate:"omitempty,oneof=go node postgres"`
 	Provider  ServiceProvider `mapstructure:"provider" validate:"omitempty,oneof=redis"`
 	Path      string          `mapstructure:"path"`
 	Address   string          `mapstructure:"address"`
@@ -146,7 +148,10 @@ func (c *Config) validate(baseDir string) error {
 			if service.Address != "" {
 				return errors.New("service " + strconv.Quote(service.Name) + " cannot define address")
 			}
-			if filepath.IsAbs(service.Path) {
+			if service.Lang == ServiceLangPostgres {
+				// PostgreSQL uses path as a connection string, not a filesystem path.
+				service.Path = strings.TrimSpace(service.Path)
+			} else if filepath.IsAbs(service.Path) {
 				service.Path = filepath.Clean(service.Path)
 			} else {
 				service.Path = filepath.Clean(filepath.Join(baseDir, service.Path))

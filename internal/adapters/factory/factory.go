@@ -7,6 +7,7 @@ import (
 	"github.com/briheet/sen/internal/adapters"
 	golangadapter "github.com/briheet/sen/internal/adapters/golang"
 	nodeadapter "github.com/briheet/sen/internal/adapters/node"
+	postgresadapter "github.com/briheet/sen/internal/adapters/postgres"
 	redisadapter "github.com/briheet/sen/internal/adapters/redis"
 )
 
@@ -22,6 +23,8 @@ func Application(language string) (adapters.Application, error) {
 		return new(nodeadapter.Adapter), nil
 	case adapters.RedisTarget:
 		return new(redisadapter.Adapter), nil
+	case adapters.PostgresTarget:
+		return new(postgresadapter.Adapter), nil
 	default:
 		return nil, ErrUnsupportedTarget
 	}

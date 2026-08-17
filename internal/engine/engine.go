@@ -34,8 +34,10 @@ func NewEngine(ctx context.Context, service config.Service, output adapters.Outp
 		target = string(service.Provider)
 		source = service.Address
 	} else {
-		if err := helpers.ValidateSourcePath(source); err != nil {
-			return nil, err
+		if target != adapters.PostgresTarget {
+			if err := helpers.ValidateSourcePath(source); err != nil {
+				return nil, err
+			}
 		}
 	}
 	application, err := factory.Application(target)
