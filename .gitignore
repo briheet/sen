@@ -1,6 +1,6 @@
 bin/
 .direnv/
-docs/
 *.test
+*.pprof
 node_modules/
 examples/
