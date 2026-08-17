@@ -34,9 +34,9 @@ func Execute(ctx context.Context) int {
 	rootCmd := &cobra.Command{
 		Use:     "senbon",
 		Aliases: []string{"sen"},
-		Short:   "Dynamic Program Analysis & Runtime Visualization of Golang programs.",
+		Short:   "Dynamic program analysis and runtime visualization.",
 		Long: `
-Dynamic Control-Flow Analysis and Runtime Visualization for Go Programs,
+Dynamic control-flow analysis and runtime visualization,
 combining source-level program analysis, runtime instrumentation, profiling,
 and execution-path visualization to show how code executes in real time.
 `,

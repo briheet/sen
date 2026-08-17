@@ -7,27 +7,24 @@ import (
 
 func RunCmd() *cobra.Command {
 	runCmd := &cobra.Command{
-		Use:   "run <path>",
-		Short: "Build and run the application",
-		Long: `Build and run a Go application under Senbon.
+		Use:   "run <language> <path>",
+		Short: "Analyze and run an application",
+		Long: `Build and run an application.
 
 Senbon loads the target program, performs static analysis,
 builds the program, starts runtime instrumentation, and
 launches the TUI.`,
-		Example: "senbon run ./cmd/server",
-		Args:    cobra.ExactArgs(1),
+		Example: "senbon run node ./examples/node",
+		Args:    cobra.ExactArgs(2),
 		Version: Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Get sourcepath, init a new engine, run it asf.
-			sourcePath := args[0]
-			engine, err := engine.NewEngine(cmd.Context(), sourcePath)
+			target, err := engine.NewEngine(cmd.Context(), args[1], args[0])
 			if err != nil {
 				return err
 			}
-			defer engine.Runtime.Process.Cleanup()
-			return engine.Run()
+			defer target.Cleanup()
+			return target.Run()
 		},
 	}
-
 	return runCmd
 }

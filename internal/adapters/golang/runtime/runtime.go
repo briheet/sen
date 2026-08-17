@@ -16,6 +16,7 @@ import (
 	runtimepprof "github.com/briheet/senbon/internal/adapters/golang/runtime/pprof"
 	runtimeprocess "github.com/briheet/senbon/internal/adapters/golang/runtime/process"
 	runtimetrace "github.com/briheet/senbon/internal/adapters/golang/runtime/trace"
+	"github.com/briheet/senbon/internal/model"
 )
 
 // Runtime owns a target process and its collected runtime data.
@@ -28,17 +29,16 @@ type Runtime struct {
 	client *http.Client
 }
 
-var (
-	_ adapters.MetricsCollector = (*Runtime)(nil)
-	_ adapters.Profiler         = (*Runtime)(nil)
-	_ adapters.Tracer           = (*Runtime)(nil)
-)
+var _ adapters.Runtime = (*Runtime)(nil)
 
 const (
-	metricsPath  = "/debug/senbon/metrics"
-	pprofPath    = "/debug/pprof/"
-	tracePath    = "/debug/pprof/trace"
-	collectorURL = "http://senbon"
+	metricsPath   = "/debug/senbon/metrics"
+	pprofPath     = "/debug/pprof/"
+	tracePath     = "/debug/pprof/trace"
+	collectorURL  = "http://senbon"
+	cpuProfile    = "cpu"
+	collectRetry  = 10 * time.Millisecond
+	collectWindow = time.Second
 )
 
 // NewRuntime builds the target process.
@@ -56,6 +56,56 @@ func NewRuntime(ctx context.Context, sourceDir string) (*Runtime, error) {
 		Profiles: make(map[string]*runtimepprof.Profile),
 		client:   &http.Client{Transport: transport},
 	}, nil
+}
+
+// Start launches the instrumented target.
+func (r *Runtime) Start(context.Context) error {
+	return r.Process.Start()
+}
+
+// Collect captures one complete runtime snapshot.
+func (r *Runtime) Collect(ctx context.Context) (model.Observation, error) {
+	retry := time.NewTicker(collectRetry)
+	defer retry.Stop()
+	for {
+		if err := r.CollectMetrics(ctx); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return model.Observation{}, ctx.Err()
+		case <-retry.C:
+		}
+	}
+
+	results := make(chan error, 2)
+	go func() { results <- r.CollectProfile(ctx, cpuProfile, collectWindow) }()
+	go func() { results <- r.CollectTrace(ctx, collectWindow) }()
+	for range 2 {
+		if err := <-results; err != nil {
+			return model.Observation{}, err
+		}
+	}
+	if err := r.CollectMetrics(ctx); err != nil {
+		return model.Observation{}, err
+	}
+	return model.Observation{Metrics: r.Metrics, Profiles: r.Profiles, Trace: r.Trace}, nil
+}
+
+// Wait blocks until the target exits.
+func (r *Runtime) Wait() error {
+	return r.Process.Wait()
+}
+
+// Stop terminates the target.
+func (r *Runtime) Stop() error {
+	return r.Process.Stop()
+}
+
+// Cleanup removes temporary target files.
+func (r *Runtime) Cleanup() error {
+	r.client.CloseIdleConnections()
+	return r.Process.Cleanup()
 }
 
 // ReadMetrics decodes and stores target runtime metrics.
@@ -96,7 +146,7 @@ func (r *Runtime) CollectMetrics(ctx context.Context) error {
 // CollectProfile requests and stores a named pprof profile.
 func (r *Runtime) CollectProfile(ctx context.Context, name string, duration time.Duration) error {
 	path := pprofPath + url.PathEscape(name)
-	if name == "cpu" {
+	if name == cpuProfile {
 		path = pprofPath + "profile"
 	}
 	if duration > 0 {

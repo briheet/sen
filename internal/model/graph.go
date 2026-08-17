@@ -136,23 +136,6 @@ func (g *RuntimeGraph) BuildUpdate(metrics *RuntimeMetrics, profiles map[string]
 	return update
 }
 
-// BuildMetricsUpdate aggregates a process-metrics snapshot.
-func (g *RuntimeGraph) BuildMetricsUpdate(metrics *RuntimeMetrics) RuntimeUpdate {
-	return RuntimeUpdate{Metrics: copyMetrics(metrics)}
-}
-
-// BuildProfileUpdate aggregates one named profile.
-func (g *RuntimeGraph) BuildProfileUpdate(name string, profile *Profile) RuntimeUpdate {
-	profiles := acquireProfileMap()
-	profiles[name] = g.buildProfile(name, profile)
-	return RuntimeUpdate{Profiles: profiles}
-}
-
-// BuildTraceUpdate aggregates one runtime trace.
-func (g *RuntimeGraph) BuildTraceUpdate(trace *Trace) RuntimeUpdate {
-	return RuntimeUpdate{Trace: g.buildTrace(trace)}
-}
-
 // ApplyUpdate consumes an update and applies it to the TUI-owned graph.
 func (g *RuntimeGraph) ApplyUpdate(update RuntimeUpdate) {
 	if update.Reset {

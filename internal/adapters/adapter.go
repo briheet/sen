@@ -3,9 +3,15 @@ package adapters
 
 import (
 	"context"
-	"time"
 
 	"github.com/briheet/senbon/internal/model"
+)
+
+const (
+	// GoTarget identifies the Go adapter.
+	GoTarget = "go"
+	// NodeTarget identifies the Node.js adapter.
+	NodeTarget = "node"
 )
 
 // Analyzer builds a normalized static graph and returns its source namespace.
@@ -13,24 +19,17 @@ type Analyzer interface {
 	Analyze(context.Context, string) (*model.StaticGraph, string, error)
 }
 
-// Runner manages a target process lifecycle.
-type Runner interface {
-	Run() error
+// Application provides analysis and runtime support for one target language.
+type Application interface {
+	Analyzer
+	Open(context.Context, string) (Runtime, error)
+}
+
+// Runtime collects normalized data from a target process.
+type Runtime interface {
+	Start(context.Context) error
+	Collect(context.Context) (model.Observation, error)
+	Wait() error
 	Stop() error
 	Cleanup() error
-}
-
-// MetricsCollector collects process-wide runtime metrics.
-type MetricsCollector interface {
-	CollectMetrics(context.Context) error
-}
-
-// Profiler collects a named profile over a duration.
-type Profiler interface {
-	CollectProfile(context.Context, string, time.Duration) error
-}
-
-// Tracer collects runtime events over a duration.
-type Tracer interface {
-	CollectTrace(context.Context, time.Duration) error
 }

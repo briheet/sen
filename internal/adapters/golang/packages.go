@@ -10,6 +10,7 @@ import (
 
 	"github.com/briheet/senbon/internal/adapters"
 	"github.com/briheet/senbon/internal/adapters/golang/analysis"
+	targetruntime "github.com/briheet/senbon/internal/adapters/golang/runtime"
 	"github.com/briheet/senbon/internal/model"
 	"golang.org/x/tools/go/packages"
 )
@@ -19,7 +20,7 @@ const currentDirectory = "."
 // Adapter analyzes Go applications.
 type Adapter struct{}
 
-var _ adapters.Analyzer = (*Adapter)(nil)
+var _ adapters.Application = (*Adapter)(nil)
 
 // Analyze loads and converts a Go application into the normalized graph.
 func (*Adapter) Analyze(ctx context.Context, sourcePath string) (*model.StaticGraph, string, error) {
@@ -32,6 +33,11 @@ func (*Adapter) Analyze(ctx context.Context, sourcePath string) (*model.StaticGr
 		return nil, "", err
 	}
 	return graph, packages[0].Module.Path, nil
+}
+
+// Open builds the instrumented Go target.
+func (*Adapter) Open(ctx context.Context, sourcePath string) (adapters.Runtime, error) {
+	return targetruntime.NewRuntime(ctx, sourcePath)
 }
 
 // Go packages error

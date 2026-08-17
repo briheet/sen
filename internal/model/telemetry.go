@@ -2,6 +2,13 @@ package model
 
 import "time"
 
+// Observation is one normalized runtime snapshot from an adapter.
+type Observation struct {
+	Metrics  *RuntimeMetrics // Required for every observation.
+	Profiles map[string]*Profile
+	Trace    *Trace
+}
+
 // Histogram contains bucket boundaries and their counts.
 type Histogram struct {
 	Counts  []uint64

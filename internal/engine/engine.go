@@ -1,128 +1,96 @@
+// Package engine joins a target adapter with Senbon's normalized model.
 package engine
 
 import (
 	"context"
-	"log"
 	"time"
 
-	"github.com/briheet/senbon/internal/adapters/golang"
-	targetruntime "github.com/briheet/senbon/internal/adapters/golang/runtime"
+	"github.com/briheet/senbon/internal/adapters"
+	"github.com/briheet/senbon/internal/adapters/factory"
 	"github.com/briheet/senbon/internal/helpers"
 	"github.com/briheet/senbon/internal/model"
 )
 
-// Main engine interface. Couldn't come up with good naming :)
-type Driver interface {
-	Run() error
-}
+const collectionTimeout = time.Minute
 
-// Engine owns the target runtime and the merged graph exposed to the TUI.
+// Engine owns a target runtime and the graph exposed to the TUI.
 type Engine struct {
-	Runtime *targetruntime.Runtime
+	Runtime adapters.Runtime
 	Graph   *model.RuntimeGraph
 }
 
-// Have compile time check
-var _ Driver = (*Engine)(nil)
-
-// Initilizes a new Engine to work with.
-func NewEngine(ctx context.Context, sourcePath string) (*Engine, error) {
-	// Validate sourcePath
+// NewEngine resolves, analyzes, and opens a target application.
+func NewEngine(ctx context.Context, sourcePath, language string) (*Engine, error) {
 	if err := helpers.ValidateSourcePath(sourcePath); err != nil {
 		return nil, err
 	}
-
-	static, namespace, err := new(golang.Adapter).Analyze(ctx, sourcePath)
+	application, err := factory.Application(language)
 	if err != nil {
 		return nil, err
 	}
-
-	observed, err := targetruntime.NewRuntime(ctx, sourcePath)
+	static, namespace, err := application.Analyze(ctx, sourcePath)
 	if err != nil {
 		return nil, err
 	}
-	merged := model.BuildRuntimeGraph(namespace, static)
-
-	return &Engine{
-		Runtime: observed,
-		Graph:   merged,
-	}, nil
+	target, err := application.Open(ctx, sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	return &Engine{Runtime: target, Graph: model.BuildRuntimeGraph(namespace, static)}, nil
 }
 
-// Snapshot returns a complete runtime update for the TUI to apply.
-func (e *Engine) Snapshot() model.RuntimeUpdate {
-	return e.Graph.BuildUpdate(e.Runtime.Metrics, e.Runtime.Profiles, e.Runtime.Trace)
+// Start launches the target application.
+func (e *Engine) Start(ctx context.Context) error {
+	return e.Runtime.Start(ctx)
 }
 
-// MetricsUpdate returns the latest process metrics.
-func (e *Engine) MetricsUpdate() model.RuntimeUpdate {
-	return e.Graph.BuildMetricsUpdate(e.Runtime.Metrics)
+// Refresh collects and applies one runtime snapshot.
+func (e *Engine) Refresh(ctx context.Context) error {
+	observation, err := e.Runtime.Collect(ctx)
+	if err != nil {
+		return err
+	}
+	e.Graph.ApplyUpdate(e.Graph.BuildUpdate(observation.Metrics, observation.Profiles, observation.Trace))
+	return nil
 }
 
-// ProfileUpdate returns one named profile, replacing its previous data.
-func (e *Engine) ProfileUpdate(name string) model.RuntimeUpdate {
-	return e.Graph.BuildProfileUpdate(name, e.Runtime.Profiles[name])
+// Wait blocks until the target exits.
+func (e *Engine) Wait() error {
+	return e.Runtime.Wait()
 }
 
-// TraceUpdate returns the latest trace, replacing its previous data.
-func (e *Engine) TraceUpdate() model.RuntimeUpdate {
-	return e.Graph.BuildTraceUpdate(e.Runtime.Trace)
+// Stop terminates the target application.
+func (e *Engine) Stop() error {
+	return e.Runtime.Stop()
 }
 
+// Cleanup removes adapter-owned temporary files.
+func (e *Engine) Cleanup() error {
+	return e.Runtime.Cleanup()
+}
+
+// Run starts the target, collects one snapshot, and waits for exit.
 func (e *Engine) Run() error {
-	done := make(chan error, 1)
-	go func() { done <- e.Runtime.Process.Run() }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), collectionTimeout)
 	defer cancel()
-	for {
-		if err := e.Runtime.CollectMetrics(ctx); err == nil {
-			break
-		}
-		select {
-		case err := <-done:
-			return err
-		case <-ctx.Done():
-			_ = e.Runtime.Process.Stop()
-			<-done
-			return ctx.Err()
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	log.Printf("senbon: collector ready")
-
-	started := time.Now()
-	results := make(chan error, 2)
-	go func() { results <- e.Runtime.CollectProfile(ctx, "cpu", time.Second) }()
-	go func() { results <- e.Runtime.CollectTrace(ctx, time.Second) }()
-	for range 2 {
-		if err := <-results; err != nil {
-			_ = e.Runtime.Process.Stop()
-			<-done
-			return err
-		}
-	}
-	log.Printf("senbon: cpu profile and trace collected in %s", time.Since(started))
-
-	if err := e.Runtime.CollectMetrics(ctx); err != nil {
-		_ = e.Runtime.Process.Stop()
-		<-done
+	if err := e.Start(ctx); err != nil {
 		return err
 	}
 
-	e.Graph.ApplyUpdate(e.Snapshot())
-	mapped := 0
-	for _, node := range e.Graph.Nodes {
-		if len(node.Metrics) != 0 {
-			mapped++
+	done := make(chan error, 1)
+	go func() { done <- e.Wait() }()
+	collected := make(chan error, 1)
+	go func() { collected <- e.Refresh(ctx) }()
+
+	select {
+	case err := <-done:
+		return err
+	case err := <-collected:
+		if err != nil {
+			_ = e.Stop()
+			<-done
+			return err
 		}
+		return <-done
 	}
-	log.Printf("senbon: heap=%d objects=%d cpu_samples=%d trace_events=%d mapped_nodes=%d",
-		e.Graph.Global.Process.LiveHeap,
-		e.Graph.Global.Process.CurrHeapObjects,
-		len(e.Runtime.Profiles["cpu"].Samples),
-		len(e.Runtime.Trace.Events),
-		mapped,
-	)
-	return <-done
 }

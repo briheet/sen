@@ -6,8 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	"github.com/briheet/senbon/internal/adapters"
 )
 
 const (
@@ -26,8 +24,6 @@ type Process struct {
 	started         chan struct{}
 	startErr        error
 }
-
-var _ adapters.Runner = (*Process)(nil)
 
 // NewProcess builds the target program with the Senbon overlay.
 func NewProcess(ctx context.Context, sourceDir string) (process *Process, err error) {
@@ -82,14 +78,28 @@ func NewProcess(ctx context.Context, sourceDir string) (process *Process, err er
 	}, nil
 }
 
-// Run starts the target program and waits for it to exit.
-func (p *Process) Run() error {
+// Start launches the target program.
+func (p *Process) Start() error {
 	p.startErr = p.RunCmd.Start()
 	close(p.started)
+	return p.startErr
+}
+
+// Wait blocks until the target program exits.
+func (p *Process) Wait() error {
+	<-p.started
 	if p.startErr != nil {
 		return p.startErr
 	}
 	return p.RunCmd.Wait()
+}
+
+// Run starts the target program and waits for it to exit.
+func (p *Process) Run() error {
+	if err := p.Start(); err != nil {
+		return err
+	}
+	return p.Wait()
 }
 
 // Stop terminates the running target program.

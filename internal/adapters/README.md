@@ -1,18 +1,17 @@
 # Adapters
 
-Adapters connect external targets to Senbon's language-neutral `model`.
+Adapters translate target-specific analysis and telemetry into `model` types.
 
-Each adapter implements only the capabilities it supports from `adapter.go`:
+- `Application` analyzes source and opens its runtime.
+- `Runtime` starts, samples, stops, and cleans up the target.
 
-- `Analyzer` builds a static source graph.
-- `Runner` manages a target process.
-- `MetricsCollector`, `Profiler`, and `Tracer` collect runtime data.
-
-Implementations live in their own directory, such as `golang`, `python`, or
-`redis`, and should include compile-time interface checks:
+Each implementation lives in its own directory and declares conformance:
 
 ```go
-var _ adapters.Tracer = (*Runtime)(nil)
+var _ adapters.Application = (*Adapter)(nil)
+var _ adapters.Runtime = (*Runtime)(nil)
 ```
+
+`factory` selects the concrete adapter used by the engine.
 
 Adapters may import `model`; `model` must not import an adapter.

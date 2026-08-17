@@ -127,16 +127,6 @@ func TestBuildRuntimeGraph(t *testing.T) {
 	require.Equal(t, uint64(42), summary.Metrics["/gc/heap/goal:bytes"])
 
 	node := result.Nodes[2]
-	result.ApplyUpdate(result.BuildMetricsUpdate(&RuntimeMetrics{UserCPU: 2}))
-	require.Equal(t, 2.0, result.Global.Process.UserCPU)
-	require.Equal(t, int64(3), result.Global.ProfileTotals[profileCount])
-	require.Equal(t, 40*time.Nanosecond, result.Global.Trace.Duration)
-
-	result.ApplyUpdate(result.BuildProfileUpdate("cpu", nil))
-	require.Empty(t, result.Global.ProfileTotals)
-	require.Empty(t, result.Global.ProfileDurations)
-	require.Equal(t, 40*time.Nanosecond, result.Global.Trace.Duration)
-
 	result.ApplyUpdate(result.BuildUpdate(&RuntimeMetrics{UserCPU: 2.5}, nil, nil))
 	require.Same(t, node, result.Nodes[2])
 	require.Empty(t, result.Nodes[2].Metrics)
