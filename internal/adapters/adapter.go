@@ -12,6 +12,8 @@ const (
 	GoTarget = "go"
 	// NodeTarget identifies the Node.js adapter.
 	NodeTarget = "node"
+	// OcamlTarget identifies the OCaml adapter.
+	OcamlTarget = "ocaml"
 )
 
 // Analyzer builds a normalized static graph and returns its source namespace.

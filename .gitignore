@@ -4,3 +4,10 @@ bin/
 *.pprof
 node_modules/
 examples/
+
+# OCaml build artifacts
+*.cmi
+*.cmo
+*.cmx
+*.cmxa
+*.o
