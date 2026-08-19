@@ -7,6 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
+	"github.com/briheet/sen/internal/tui/pages"
 	"github.com/briheet/sen/internal/tui/pages/servers/graph"
 	"github.com/briheet/sen/internal/tui/styles"
 )
@@ -15,10 +16,12 @@ import (
 type Model struct {
 	Engine *engine.Engine
 
-	graph  graph.Model
-	pager  paginator.Model
-	width  int
-	height int
+	graph    graph.Model
+	pager    paginator.Model
+	width    int
+	height   int
+	viewport pages.ViewportMsg
+	revision uint64
 }
 
 // New creates a server model from a built engine.
@@ -42,3 +45,6 @@ func (m Model) Name() string { return m.Engine.Service.Name }
 
 // Type returns the configured service type.
 func (m Model) Type() config.ServiceType { return m.Engine.Service.Type }
+
+// Revision changes when the server page's terminal text changes.
+func (m Model) Revision() uint64 { return m.revision + m.graph.Revision() }

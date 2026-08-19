@@ -3,62 +3,31 @@ package graph
 import (
 	"image"
 	"image/color"
+	"image/draw"
 	"math"
+	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/briheet/sen/internal/tui/styles"
-	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/goregular"
-	"golang.org/x/image/font/opentype"
-	"golang.org/x/image/math/fixed"
+	"golang.org/x/image/vector"
 )
 
 const (
 	fallbackCellWidth  = 6
 	fallbackCellHeight = 16
 	fallbackNodeRadius = 4
-	fallbackLabelSize  = 7.0
-	graphInsetX        = 1.0
+	graphInsetX        = 3.0
 	graphInsetY        = 1.0
-	alphaLevels        = 16
+	alphaLevels        = 63
+	edgeWidth          = 1.5
+	labelHysteresis    = 0.75
 )
 
 type graphPalette struct {
 	colors color.Palette
-	text   [alphaLevels + 1]uint8
 	idle   [alphaLevels + 1]uint8
 	active [alphaLevels + 1]uint8
 	hot    [alphaLevels + 1]uint8
-}
-
-// textCanvas maps glyph alpha directly to the text palette ramp.
-type textCanvas struct {
-	canvas  *image.Paletted
-	indexes *[alphaLevels + 1]uint8
-}
-
-func (c textCanvas) ColorModel() color.Model { return c.canvas.ColorModel() }
-func (c textCanvas) Bounds() image.Rectangle { return c.canvas.Bounds() }
-func (c textCanvas) At(x, y int) color.Color { return c.canvas.At(x, y) }
-
-func (c textCanvas) RGBA64At(x, y int) color.RGBA64 {
-	red, green, blue, alpha := c.canvas.At(x, y).RGBA()
-	return color.RGBA64{R: uint16(red), G: uint16(green), B: uint16(blue), A: uint16(alpha)}
-}
-
-func (c textCanvas) Set(x, y int, colour color.Color) {
-	_, _, _, alpha := colour.RGBA()
-	c.setAlpha(x, y, alpha)
-}
-
-func (c textCanvas) SetRGBA64(x, y int, colour color.RGBA64) {
-	c.setAlpha(x, y, uint32(colour.A))
-}
-
-func (c textCanvas) setAlpha(x, y int, alpha uint32) {
-	level := int((alpha*alphaLevels + 0x7fff) / 0xffff)
-	if level > 0 {
-		c.canvas.SetColorIndex(x, y, c.indexes[min(level, alphaLevels)])
-	}
 }
 
 func newGraphPalette(theme styles.Theme) graphPalette {
@@ -71,34 +40,13 @@ func newGraphPalette(theme styles.Theme) graphPalette {
 			palette.colors = append(palette.colors, pixel)
 		}
 	}
-	add(theme.Text, &palette.text)
 	add(theme.NodeIdle, &palette.idle)
 	add(theme.NodeActive, &palette.active)
 	add(theme.NodeHot, &palette.hot)
 	return palette
 }
 
-var labelFont = func() *opentype.Font {
-	parsed, err := opentype.Parse(goregular.TTF)
-	if err != nil {
-		panic(err)
-	}
-	return parsed
-}()
-
-func newLabelFace(size float64) font.Face {
-	face, err := opentype.NewFace(labelFont, &opentype.FaceOptions{
-		Size:    size,
-		DPI:     72,
-		Hinting: font.HintingFull,
-	})
-	if err != nil {
-		panic(err)
-	}
-	return face
-}
-
-// View returns placeholders whose pixels are supplied through Kitty graphics.
+// View returns native terminal labels; graph pixels are placed behind them.
 func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
@@ -112,120 +60,219 @@ func (m Model) View() string {
 	if m.renderErr != nil {
 		return centeredMessage(m.width, m.height, "Unable to render graph.")
 	}
-	if m.placeholder == "" {
-		return centeredMessage(m.width, m.height, "Graph viewport is too large.")
+	return m.labels
+}
+
+// refreshLabels rebuilds terminal text only after a label crosses a cell.
+func (m *Model) refreshLabels(force bool) {
+	m.refreshLabelsFrom(m.nodes, force)
+}
+
+func (m *Model) refreshLabelsFrom(source []node, force bool) {
+	redraw := force
+	for index := range m.nodes {
+		node := &m.nodes[index]
+		positioned := *node
+		if index < len(source) {
+			positioned.position = source[index].position
+		}
+		position := screenPoint(positioned.position)
+		cellX := stableLabelCell(position.x, node.labelCellX, force)
+		cellY := stableLabelCell(position.y, node.labelCellY, force)
+		x, y := m.labelPosition(positioned.label, cellX, cellY)
+		if x != node.labelX || y != node.labelY || cellX != node.labelCellX || cellY != node.labelCellY {
+			node.labelX, node.labelY = x, y
+			node.labelCellX, node.labelCellY = cellX, cellY
+			redraw = true
+		}
 	}
-	return m.placeholder
+	if m.labelsDragging != m.dragging {
+		m.labelsDragging = m.dragging
+		redraw = true
+	}
+	if !redraw {
+		return
+	}
+
+	cells := make([]rune, m.width*m.height)
+	hot := make([]bool, len(cells))
+	for index := range cells {
+		cells[index] = ' '
+	}
+	for index, node := range m.nodes {
+		for offset, character := range []rune(node.label) {
+			x := node.labelX + offset
+			if x < 0 || x >= m.width || node.labelY < 0 || node.labelY >= m.height {
+				continue
+			}
+			position := node.labelY*m.width + x
+			cells[position] = character
+			hot[position] = index == m.dragging
+		}
+	}
+
+	normalStyle := lipgloss.NewStyle().Foreground(styles.Zakura.Text)
+	hotStyle := lipgloss.NewStyle().Foreground(styles.Zakura.NodeHot)
+	var output strings.Builder
+	output.Grow(len(cells) + m.height)
+	for y := range m.height {
+		row := cells[y*m.width : (y+1)*m.width]
+		rowHot := hot[y*m.width : (y+1)*m.width]
+		for start := 0; start < len(row); {
+			if row[start] == ' ' {
+				output.WriteRune(' ')
+				start++
+				continue
+			}
+			end := start + 1
+			for end < len(row) && row[end] != ' ' && rowHot[end] == rowHot[start] {
+				end++
+			}
+			style := normalStyle
+			if rowHot[start] {
+				style = hotStyle
+			}
+			output.WriteString(style.Render(string(row[start:end])))
+			start = end
+		}
+		if y < m.height-1 {
+			output.WriteByte('\n')
+		}
+	}
+	m.labels = output.String()
+	m.revision++
+}
+
+func (m Model) labelPosition(label string, cellX, cellY int) (int, int) {
+	labelWidth := len([]rune(label))
+	x := cellX - labelWidth/2
+	y := cellY - 1
+	if y < 0 {
+		x = cellX + 1
+		y = cellY
+	}
+	x = max(0, min(x, max(0, m.width-labelWidth)))
+	y = max(0, min(y, max(0, m.height-1)))
+	return x, y
+}
+
+// stableLabelCell prevents native text from flickering across a cell boundary.
+func stableLabelCell(position float64, current int, force bool) int {
+	if force || math.Abs(position-float64(current)) > labelHysteresis {
+		return int(math.Round(position))
+	}
+	return current
 }
 
 func (r *renderer) renderImage(request renderRequest) *image.Paletted {
 	bounds := image.Rect(0, 0, request.width*request.cellWidth, request.height*request.cellHeight)
 	if r.canvas == nil || r.canvas.Bounds() != bounds {
 		r.canvas = image.NewPaletted(bounds, r.palette.colors)
+		r.mask = image.NewAlpha(bounds)
 	} else {
 		clear(r.canvas.Pix)
 	}
-	canvas := r.canvas
+
+	// Glows sit below links so translucent pixels cannot erase connections.
+	r.drawNodes(request, false, request.nodeRadius+2, 0.15)
+	r.drawNodes(request, true, request.nodeRadius+2, 0.2)
+	r.drawEdges(request, false)
+	r.drawEdges(request, true)
+	r.drawNodes(request, false, request.nodeRadius, 1)
+	r.drawNodes(request, true, request.nodeRadius, 1)
+	return r.canvas
+}
+
+func (r *renderer) drawEdges(request renderRequest, hot bool) {
+	drawn := false
 	for _, edge := range r.edges {
-		from, to := edgePoints(request.nodes[edge.from], request.nodes[edge.to], request.cellWidth, request.cellHeight, request.nodeRadius)
-		edge.draw(canvas, from, to, r.palette.idle[alphaLevels])
+		connected := edge.from == request.dragging || edge.to == request.dragging
+		if connected != hot {
+			continue
+		}
+		if !drawn {
+			r.resetMask()
+			drawn = true
+		}
+		from := pixelPoint(request.nodes[edge.from].position, request.cellWidth, request.cellHeight)
+		to := pixelPoint(request.nodes[edge.to].position, request.cellWidth, request.cellHeight)
+		addCapsule(&r.rasterizer, from, to, edgeWidth)
 	}
-	labels := textCanvas{canvas: canvas, indexes: &r.palette.text}
-	drawer := font.Drawer{
-		Dst:  labels,
-		Src:  image.NewUniform(r.palette.colors[r.palette.text[alphaLevels]]),
-		Face: request.face,
+	if !drawn {
+		return
 	}
+	indexes := &r.palette.idle
+	if hot {
+		indexes = &r.palette.hot
+	}
+	r.paintMask(indexes, 1)
+}
+
+func (r *renderer) drawNodes(request renderRequest, hotOnly bool, radius, opacity float64) {
+	drawn := false
 	for index, node := range request.nodes {
-		position := pixelPoint(node.position, request.cellWidth, request.cellHeight)
-		indexes := &r.palette.active
-		if index == request.dragging {
-			indexes = &r.palette.hot
+		if (index == request.dragging) != hotOnly {
+			continue
 		}
-		drawCircle(canvas, position, request.nodeRadius+2, indexes, 0.15)
-		drawCircle(canvas, position, request.nodeRadius, indexes, 1)
-		drawer.Dot = labelPoint(canvas.Bounds(), position, node.label, request.face, request.nodeRadius)
-		drawer.DrawString(node.label)
+		if !drawn {
+			r.resetMask()
+			drawn = true
+		}
+		addCircle(&r.rasterizer, pixelPoint(node.position, request.cellWidth, request.cellHeight), radius)
 	}
-	return canvas
+	if !drawn {
+		return
+	}
+	indexes := &r.palette.active
+	if hotOnly {
+		indexes = &r.palette.hot
+	}
+	r.paintMask(indexes, opacity)
 }
 
-func (m edgeModel) draw(canvas *image.Paletted, from, to point, colour uint8) {
-	drawLine(canvas, from, to, colour)
+func (r *renderer) resetMask() {
+	clear(r.mask.Pix)
+	r.rasterizer.Reset(r.mask.Bounds().Dx(), r.mask.Bounds().Dy())
+	r.rasterizer.DrawOp = draw.Src
 }
 
-// edgePoints connects circle boundaries; labels are a separate render layer.
-func edgePoints(from, to node, cellWidth, cellHeight int, radius float64) (point, point) {
-	start := pixelPoint(from.position, cellWidth, cellHeight)
-	end := pixelPoint(to.position, cellWidth, cellHeight)
-	delta := point{x: end.x - start.x, y: end.y - start.y}
-	length := distance(start, end)
+func (r *renderer) paintMask(indexes *[alphaLevels + 1]uint8, opacity float64) {
+	r.rasterizer.Draw(r.mask, r.mask.Bounds(), image.Opaque, image.Point{})
+	for index, alpha := range r.mask.Pix {
+		level := int(math.Round(float64(alpha) * opacity * alphaLevels / 255))
+		if level > 0 {
+			r.canvas.Pix[index] = indexes[min(level, alphaLevels)]
+		}
+	}
+}
+
+func addCapsule(rasterizer *vector.Rasterizer, from, to point, width float64) {
+	delta := point{x: to.x - from.x, y: to.y - from.y}
+	length := math.Hypot(delta.x, delta.y)
+	radius := width / 2
 	if length == 0 {
-		return start, end
+		addCircle(rasterizer, from, radius)
+		return
 	}
-	offset := min(max(1, radius-1), length/2)
-	start.x += delta.x / length * offset
-	start.y += delta.y / length * offset
-	end.x -= delta.x / length * offset
-	end.y -= delta.y / length * offset
-	return start, end
+	normal := point{x: -delta.y / length * radius, y: delta.x / length * radius}
+	rasterizer.MoveTo(float32(from.x+normal.x), float32(from.y+normal.y))
+	rasterizer.LineTo(float32(to.x+normal.x), float32(to.y+normal.y))
+	rasterizer.LineTo(float32(to.x-normal.x), float32(to.y-normal.y))
+	rasterizer.LineTo(float32(from.x-normal.x), float32(from.y-normal.y))
+	rasterizer.ClosePath()
+	addCircle(rasterizer, from, radius)
+	addCircle(rasterizer, to, radius)
 }
 
-func labelPoint(bounds image.Rectangle, position point, label string, face font.Face, radius float64) fixed.Point26_6 {
-	textWidth := font.MeasureString(face, label).Ceil()
-	gap := max(2, radius/2)
-	x := int(math.Round(position.x)) - textWidth/2
-	y := int(math.Round(position.y - radius - gap))
-	ascent := face.Metrics().Ascent.Ceil()
-	if y < ascent {
-		x = int(math.Round(position.x + radius + gap))
-		y = int(math.Round(position.y)) + ascent/2
-	}
-	x = max(bounds.Min.X, min(x, bounds.Max.X-textWidth))
-	y = max(bounds.Min.Y+ascent, min(y, bounds.Max.Y))
-	return fixed.P(x, y)
-}
-
-// drawLine uses a two-pixel stroke so scaled diagonals remain continuous.
-func drawLine(canvas *image.Paletted, from, to point, colour uint8) {
-	x0, y0 := int(math.Round(from.x)), int(math.Round(from.y))
-	x1, y1 := int(math.Round(to.x)), int(math.Round(to.y))
-	dx, dy := x1-x0, y1-y0
-	if dx < 0 {
-		dx = -dx
-	}
-	if dy < 0 {
-		dy = -dy
-	}
-	stepX, stepY := -1, -1
-	if x0 < x1 {
-		stepX = 1
-	}
-	if y0 < y1 {
-		stepY = 1
-	}
-
-	err := dx - dy
-	for {
-		canvas.SetColorIndex(x0, y0, colour)
-		if dx >= dy {
-			canvas.SetColorIndex(x0, y0+1, colour)
-		} else {
-			canvas.SetColorIndex(x0+1, y0, colour)
-		}
-		if x0 == x1 && y0 == y1 {
-			return
-		}
-		twice := 2 * err
-		if twice > -dy {
-			err -= dy
-			x0 += stepX
-		}
-		if twice < dx {
-			err += dx
-			y0 += stepY
-		}
-	}
+func addCircle(rasterizer *vector.Rasterizer, center point, radius float64) {
+	const kappa = 0.5522847498307936
+	x, y, control := center.x, center.y, radius*kappa
+	rasterizer.MoveTo(float32(x+radius), float32(y))
+	rasterizer.CubeTo(float32(x+radius), float32(y+control), float32(x+control), float32(y+radius), float32(x), float32(y+radius))
+	rasterizer.CubeTo(float32(x-control), float32(y+radius), float32(x-radius), float32(y+control), float32(x-radius), float32(y))
+	rasterizer.CubeTo(float32(x-radius), float32(y-control), float32(x-control), float32(y-radius), float32(x), float32(y-radius))
+	rasterizer.CubeTo(float32(x+control), float32(y-radius), float32(x+radius), float32(y-control), float32(x+radius), float32(y))
+	rasterizer.ClosePath()
 }
 
 func pixelPoint(position point, cellWidth, cellHeight int) point {
@@ -239,21 +286,4 @@ func pixelPoint(position point, cellWidth, cellHeight int) point {
 // screenPoint keeps graph coordinates independent from viewport padding.
 func screenPoint(position point) point {
 	return point{x: position.x + graphInsetX, y: position.y + graphInsetY}
-}
-
-func drawCircle(canvas *image.Paletted, center point, radius float64, indexes *[alphaLevels + 1]uint8, opacity float64) {
-	minimumX := int(math.Floor(center.x - radius - 1))
-	maximumX := int(math.Ceil(center.x + radius + 1))
-	minimumY := int(math.Floor(center.y - radius - 1))
-	maximumY := int(math.Ceil(center.y + radius + 1))
-	for y := minimumY; y <= maximumY; y++ {
-		for x := minimumX; x <= maximumX; x++ {
-			distance := math.Hypot(float64(x)+0.5-center.x, float64(y)+0.5-center.y)
-			coverage := clamp(radius+0.5-distance, 0, 1) * opacity
-			level := int(math.Round(coverage * alphaLevels))
-			if level > 0 {
-				canvas.SetColorIndex(x, y, indexes[min(level, alphaLevels)])
-			}
-		}
-	}
 }

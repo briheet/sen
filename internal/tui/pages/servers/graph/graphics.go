@@ -2,7 +2,6 @@ package graph
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -14,12 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	maxPlaceholderSpan  = 283
-	minimumRasterHeight = 12
-)
-
-var errViewportTooLarge = errors.New("graph viewport exceeds Kitty placeholder limits")
+const maximumRasterHeight = 20
 
 func supportsGraphics() bool {
 	terminal := strings.ToLower(os.Getenv("TERM"))
@@ -42,45 +36,49 @@ func terminalCellSize() (int, int) {
 }
 
 func rasterCellSize(width, height int) (int, int) {
-	common := width
-	for value := height; value != 0; {
-		common, value = value, common%value
+	if height <= maximumRasterHeight {
+		return width, height
 	}
-	width, height = width/common, height/common
-	scale := max(1, (minimumRasterHeight+height-1)/height)
-	return width * scale, height * scale
+	// Kitty scales the image to terminal cells, so cap work while preserving aspect.
+	return max(1, (width*maximumRasterHeight+height/2)/height), maximumRasterHeight
+}
+
+func (m Model) quiet() byte {
+	if m.dump != nil {
+		return 1 // Keep terminal protocol errors visible while debugging.
+	}
+	return 2
 }
 
 func (m *Model) upload() tea.Cmd {
-	if !m.graphics || len(m.nodes) == 0 || m.width == 0 || m.height == 0 {
+	if !m.graphics || !m.visible || m.renderPending || len(m.nodes) == 0 || m.width == 0 || m.height == 0 {
 		return nil
 	}
-	if m.width > maxPlaceholderSpan || m.height > maxPlaceholderSpan {
-		m.renderErr = errViewportTooLarge
-		m.trace("upload rejected error=%q", m.renderErr)
-		return nil
-	}
-	quiet := byte(2)
-	if m.dump != nil {
-		quiet = 1 // Keep terminal errors visible while debugging.
-	}
+	quiet := m.quiet()
 	m.renderSequence++
+	imageID := m.imageIDs[0]
+	if m.frontImageID == imageID {
+		imageID = m.imageIDs[1]
+	}
 	done := make(chan renderResult, 1)
 	nodes := snapshotNodes(m.nodes)
 	m.renderer.submit(renderRequest{
-		face:       m.labelFace,
-		nodes:      nodes,
-		sequence:   m.renderSequence,
-		imageID:    m.imageID,
-		dragging:   m.dragging,
-		width:      m.width,
-		height:     m.height,
-		cellWidth:  m.cellWidth,
-		cellHeight: m.cellHeight,
-		nodeRadius: m.nodeRadius,
-		quiet:      quiet,
-		done:       done,
+		nodes:           nodes,
+		sequence:        m.renderSequence,
+		imageID:         imageID,
+		previousImageID: m.frontImageID,
+		dragging:        m.dragging,
+		width:           m.width,
+		height:          m.height,
+		originX:         m.originX,
+		originY:         m.originY,
+		cellWidth:       m.cellWidth,
+		cellHeight:      m.cellHeight,
+		nodeRadius:      m.nodeRadius,
+		quiet:           quiet,
+		done:            done,
 	})
+	m.renderPending = true
 	m.renderErr = nil
 	return renderCommand(done, m.owner)
 }
@@ -103,29 +101,6 @@ func writeChunks(output *bytes.Buffer, payload []byte, options *kitty.Options) {
 		}
 		output.WriteString(ansi.KittyGraphics(payload[offset:end], values...))
 	}
-}
-
-func placeholders(id uint32, width, height int) (string, error) {
-	if width > maxPlaceholderSpan || height > maxPlaceholderSpan {
-		return "", errViewportTooLarge
-	}
-	colour := ansi.RGBColor{R: byte(id >> 16), G: byte(id >> 8), B: byte(id)}
-	foreground := ansi.Style{}.ForegroundColor(colour).String()
-	resetForeground := ansi.Style{}.ForegroundColor(nil).String()
-	var output strings.Builder
-	for row := range height {
-		output.WriteString(foreground)
-		for column := range width {
-			output.WriteRune(kitty.Placeholder)
-			output.WriteRune(kitty.Diacritic(row))
-			output.WriteRune(kitty.Diacritic(column))
-		}
-		output.WriteString(resetForeground)
-		if row < height-1 {
-			output.WriteByte('\n')
-		}
-	}
-	return output.String(), nil
 }
 
 func centeredMessage(width, height int, message string) string {

@@ -14,11 +14,15 @@ func (m Model) Init() tea.Cmd {
 
 // Update handles messages for the server page.
 func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
-	if size, ok := msg.(tea.WindowSizeMsg); ok {
-		m.width = max(0, size.Width)
-		m.height = max(0, size.Height)
+	if viewport, ok := msg.(pages.ViewportMsg); ok {
+		m.viewport = viewport
+		m.width = max(0, viewport.Width)
+		m.height = max(0, viewport.Height)
+		viewport.Width = m.width
+		viewport.Height = max(0, m.height-1)
+		viewport.Visible = viewport.Visible && m.pager.Page == 0
 		var command tea.Cmd
-		m.graph, command = m.graph.Update(tea.WindowSizeMsg{Width: m.width, Height: max(0, m.height-1)})
+		m.graph, command = m.graph.Update(viewport)
 		return m, command
 	}
 
@@ -26,7 +30,17 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 		indicator := m.pager.View()
 		start := max(0, (m.width-lipgloss.Width(indicator))/2)
 		if offset := click.X - start; click.Button == tea.MouseLeft && offset >= 0 && offset < lipgloss.Width(indicator) {
-			m.pager.Page = offset / lipgloss.Width(m.pager.ActiveDot)
+			page := min(m.pager.TotalPages-1, offset/lipgloss.Width(m.pager.ActiveDot))
+			if page != m.pager.Page {
+				m.pager.Page = page
+				m.revision++
+				viewport := m.viewport
+				viewport.Height = max(0, m.height-1)
+				viewport.Visible = m.viewport.Visible && page == 0
+				var command tea.Cmd
+				m.graph, command = m.graph.Update(viewport)
+				return m, command
+			}
 		}
 		return m, nil
 	}

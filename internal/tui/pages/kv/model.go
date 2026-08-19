@@ -27,3 +27,6 @@ func (m Model) Name() string { return m.Service.Name }
 
 // Type returns the configured service type.
 func (m Model) Type() config.ServiceType { return m.Service.Type }
+
+// Revision changes when the page's rendered text changes.
+func (Model) Revision() uint64 { return 0 }

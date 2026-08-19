@@ -13,4 +13,12 @@ type Page interface {
 	Init() tea.Cmd
 	Update(tea.Msg) (Page, tea.Cmd)
 	View() tea.View
+	Revision() uint64
+}
+
+// ViewportMsg gives a page its absolute terminal bounds and visibility.
+type ViewportMsg struct {
+	X, Y          int
+	Width, Height int
+	Visible       bool
 }

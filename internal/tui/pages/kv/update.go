@@ -11,6 +11,9 @@ func (m Model) Init() tea.Cmd {
 }
 
 // Update handles messages for the key-value page.
-func (m Model) Update(_ tea.Msg) (pages.Page, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
+	if viewport, ok := msg.(pages.ViewportMsg); ok {
+		_ = viewport // KV layout will consume these bounds when its UI is implemented.
+	}
 	return m, nil
 }

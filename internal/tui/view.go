@@ -27,7 +27,7 @@ func (m *model) refreshView() {
 		Align(lipgloss.Center).
 		Render(m.footer.View())
 
-	// Pages already own the exact remaining viewport; keep graphics placeholders intact.
+	// Pages own the remaining viewport; Kitty pixels are placed behind this text.
 	layout := lipgloss.JoinVertical(lipgloss.Left, header, view.Content, footer)
 	view.Content = lipgloss.NewStyle().
 		Width(m.width).

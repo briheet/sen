@@ -13,7 +13,6 @@ import (
 	"github.com/briheet/sen/internal/tui/pages/kv"
 	"github.com/briheet/sen/internal/tui/pages/servers"
 	"github.com/briheet/sen/internal/tui/styles"
-	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,7 +73,7 @@ func TestGraphBeginsDirectlyBelowHeader(t *testing.T) {
 
 	lines := strings.Split(updated.(model).View().Content, "\n")
 	require.Contains(t, lines[1], "api")
-	require.Contains(t, lines[2], string(kitty.Placeholder))
+	require.Contains(t, lines[2], "main")
 }
 
 func TestModelMapsKVEngine(t *testing.T) {

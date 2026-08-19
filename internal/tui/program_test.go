@@ -9,7 +9,6 @@ import (
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
 	domain "github.com/briheet/sen/internal/model"
-	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 	"github.com/stretchr/testify/require"
 )
@@ -85,12 +84,40 @@ func TestProgramEmitsKittyGraph(t *testing.T) {
 		altScreen := bytes.Index(output, []byte("\x1b[?1049h"))
 		return altScreen >= 0 &&
 			bytes.LastIndex(output, []byte("\x1b_Gf=100")) > altScreen &&
-			bytes.Index(output, []byte(string(kitty.Placeholder))) > altScreen
+			bytes.LastIndex(output, []byte("a=p,z=-1")) > altScreen &&
+			bytes.Index(output, []byte("main")) > altScreen
 	})
 	require.Less(t,
 		bytes.Index(terminalOutput, []byte("\x1b[?1049h")),
 		bytes.LastIndex(terminalOutput, []byte("\x1b_Gf=100")),
 	)
+}
+
+func TestProgramDeletesGraphWhenSwitchingServices(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	server := &engine.Engine{
+		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
+		Graph:   programRuntimeGraph(),
+	}
+	services := []config.Service{
+		server.Service,
+		{Name: "cache", Type: config.ServiceTypeKV, Provider: config.ServiceProviderRedis},
+	}
+	tm := teatest.NewTestModel(t, initialModel([]*engine.Engine{server}, services, "", nil),
+		teatest.WithInitialTermSize(60, 20),
+	)
+	t.Cleanup(func() { require.NoError(t, tm.Quit()) })
+
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		return bytes.Contains(output, []byte("a=p,z=-1"))
+	})
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyRight})
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		return bytes.Contains(output, []byte("cache (redis)")) &&
+			bytes.Contains(output, []byte("a=d")) &&
+			bytes.Contains(output, []byte("d=I"))
+	})
 }
 
 func programRuntimeGraph() *domain.RuntimeGraph {

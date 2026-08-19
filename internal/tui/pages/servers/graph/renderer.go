@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -14,17 +15,18 @@ import (
 	"github.com/briheet/sen/internal/tui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
-	"golang.org/x/image/font"
+	"golang.org/x/image/vector"
 )
 
 const maxPooledRenderNodes = 4096
 
 type renderRequest struct {
-	face                    font.Face
 	nodes                   []node
 	sequence                uint64
 	imageID                 uint32
+	previousImageID         uint32
 	dragging, width, height int
+	originX, originY        int
 	cellWidth, cellHeight   int
 	nodeRadius              float64
 	quiet                   byte
@@ -32,21 +34,44 @@ type renderRequest struct {
 }
 
 type renderResult struct {
-	output  string
+	frame   frameOutput
 	err     error
 	dropped bool
 }
 
+// frameOutput carries terminal bytes and the state committed after they print.
+type frameOutput struct {
+	output   string
+	owner    string
+	nodes    []node
+	sequence uint64
+	imageID  uint32
+}
+
+func (m frameOutput) String() string { return m.output }
+
+type renderReadyMsg struct {
+	frame frameOutput
+}
+
+// DebugSummary avoids copying encoded image bytes into diagnostic logs.
+func (m renderReadyMsg) DebugSummary() string {
+	return fmt.Sprintf("graph[%s] render ready sequence=%d image_id=%d",
+		m.frame.owner, m.frame.sequence, m.frame.imageID)
+}
+
 // renderer serializes image encoding and retains its working memory.
 type renderer struct {
-	dump     io.Writer
-	owner    string
-	edges    []edgeModel
-	palette  graphPalette
-	canvas   *image.Paletted
-	requests chan renderRequest
-	latest   atomic.Uint64
-	start    sync.Once
+	dump       io.Writer
+	owner      string
+	edges      []edgeModel
+	palette    graphPalette
+	canvas     *image.Paletted
+	mask       *image.Alpha
+	rasterizer vector.Rasterizer
+	requests   chan renderRequest
+	latest     atomic.Uint64
+	start      sync.Once
 
 	output  bytes.Buffer
 	encoded bytes.Buffer
@@ -94,6 +119,11 @@ func (r *renderer) submit(request renderRequest) {
 	}
 }
 
+// cancel makes queued or in-flight frames stale before a graph is hidden.
+func (r *renderer) cancel(sequence uint64) {
+	r.latest.Store(sequence)
+}
+
 func (r *renderer) run() {
 	for request := range r.requests {
 		err := r.render(request)
@@ -101,12 +131,18 @@ func (r *renderer) run() {
 		if request.sequence != r.latest.Load() {
 			result = renderResult{dropped: true}
 		} else if err == nil {
-			result.output = r.output.String()
-			r.trace("upload queued image_id=%d bytes=%d width=%d height=%d",
-				request.imageID, r.output.Len(), request.width, request.height)
+			result.frame = frameOutput{
+				output: r.output.String(), owner: r.owner, nodes: request.nodes,
+				sequence: request.sequence, imageID: request.imageID,
+			}
+			r.trace("frame ready image_id=%d previous_id=%d bytes=%d origin=%d,%d size=%dx%d",
+				request.imageID, request.previousImageID, r.output.Len(),
+				request.originX, request.originY, request.width, request.height)
 		}
 		request.done <- result
-		releaseRenderNodes(request.nodes)
+		if result.dropped || result.err != nil {
+			releaseRenderNodes(request.nodes)
+		}
 	}
 }
 
@@ -143,20 +179,32 @@ func (r *renderer) render(request renderRequest) error {
 		r.trace("upload failed error=%q", err)
 		return err
 	}
+	// Upload first, then atomically swap physical placements at the viewport.
 	placement := &kitty.Options{
-		Action:           kitty.Put,
-		ID:               int(request.imageID),
-		Quiet:            request.quiet,
-		Columns:          request.width,
-		Rows:             request.height,
-		VirtualPlacement: true,
-		DoNotMoveCursor:  true,
+		Action:          kitty.Put,
+		ID:              int(request.imageID),
+		Quiet:           request.quiet,
+		Columns:         request.width,
+		Rows:            request.height,
+		DoNotMoveCursor: true,
 	}
-	_, err := r.output.WriteString(ansi.KittyGraphics(nil, placement.Options()...))
-	if err != nil {
-		r.trace("upload failed error=%q", err)
-		return err
+	r.output.WriteString(ansi.SetModeSynchronizedOutput)
+	r.output.WriteString(ansi.SaveCursor)
+	r.output.WriteString(ansi.CursorPosition(request.originX+1, request.originY+1))
+	placementOptions := append(placement.Options(), "z=-1")
+	r.output.WriteString(ansi.KittyGraphics(nil, placementOptions...))
+	if request.previousImageID != 0 {
+		remove := &kitty.Options{
+			Action:          kitty.Delete,
+			ID:              int(request.previousImageID),
+			Quiet:           request.quiet,
+			Delete:          kitty.DeleteID,
+			DeleteResources: true,
+		}
+		r.output.WriteString(ansi.KittyGraphics(nil, remove.Options()...))
 	}
+	r.output.WriteString(ansi.RestoreCursor)
+	r.output.WriteString(ansi.ResetModeSynchronizedOutput)
 	return nil
 }
 
@@ -189,9 +237,6 @@ type renderFailedMsg struct {
 	err   error
 }
 
-// InvalidateView asks the root model to replace the graph with its error state.
-func (renderFailedMsg) InvalidateView() {}
-
 func renderCommand(done <-chan renderResult, owner string) tea.Cmd {
 	return func() tea.Msg {
 		result := <-done
@@ -201,7 +246,21 @@ func renderCommand(done <-chan renderResult, owner string) tea.Cmd {
 		case result.err != nil:
 			return renderFailedMsg{owner: owner, err: result.err}
 		default:
-			return tea.Raw(result.output)()
+			return renderReadyMsg{frame: result.frame}
 		}
 	}
+}
+
+func deleteImagesCommand(ids [2]uint32, quiet byte) tea.Cmd {
+	var output strings.Builder
+	output.WriteString(ansi.SetModeSynchronizedOutput)
+	for _, id := range ids {
+		remove := &kitty.Options{
+			Action: kitty.Delete, ID: int(id), Quiet: quiet,
+			Delete: kitty.DeleteID, DeleteResources: true,
+		}
+		output.WriteString(ansi.KittyGraphics(nil, remove.Options()...))
+	}
+	output.WriteString(ansi.ResetModeSynchronizedOutput)
+	return tea.Raw(output.String())
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/briheet/sen/internal/tui/pages"
 )
 
 const (
@@ -49,27 +50,68 @@ func nextUpload(owner string, width, height int) tea.Cmd {
 // Update handles graph resizing, dragging, and layout frames.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case pages.ViewportMsg:
+		wasVisible := m.visible
+		m.originX, m.originY = msg.X, msg.Y
+		m.visible = msg.Visible
 		m.resize(msg.Width, msg.Height)
-		m.trace("resized width=%d height=%d cell=%dx%d",
-			m.width, m.height, m.cellWidth, m.cellHeight)
+		m.renderPending = false
+		m.trace("viewport origin=%d,%d size=%dx%d cell=%dx%d visible=%t",
+			m.originX, m.originY, m.width, m.height, m.cellWidth, m.cellHeight, m.visible)
+		if !m.visible {
+			m.animating = false
+			m.generation++
+			m.renderSequence++
+			m.renderer.cancel(m.renderSequence)
+			m.frontImageID = 0
+			if wasVisible && m.graphics {
+				m.trace("deactivated images=%d,%d", m.imageIDs[0], m.imageIDs[1])
+				return m, deleteImagesCommand(m.imageIDs, m.quiet())
+			}
+			return m, nil
+		}
 		if !m.graphics || len(m.nodes) == 0 {
 			return m, nil
 		}
-		// Let Bubble Tea enter the alternate screen before transmitting pixels.
+		m.trace("activated")
+		// Let Bubble Tea paint native labels before placing graph pixels.
 		return m, nextUpload(m.owner, m.width, m.height)
 	case uploadMsg:
-		if msg.owner != m.owner || msg.width != m.width || msg.height != m.height {
+		if msg.owner != m.owner || msg.width != m.width || msg.height != m.height || !m.visible {
 			return m, nil
 		}
 		return m, m.upload()
+	case renderReadyMsg:
+		frame := msg.frame
+		if frame.owner != m.owner || frame.sequence != m.renderSequence || !m.visible {
+			releaseRenderNodes(frame.nodes)
+			return m, nil
+		}
+		return m, tea.Raw(frame)
 	case tea.RawMsg:
-		// The renderer has handed the encoded frame back to Bubble Tea.
-		m.trace("upload accepted")
-		return m, nil
+		frame, ok := msg.Msg.(frameOutput)
+		if !ok || frame.owner != m.owner {
+			return m, nil
+		}
+		if frame.sequence == m.renderSequence && m.visible {
+			m.frontImageID = frame.imageID
+			m.renderPending = false
+			m.refreshLabelsFrom(frame.nodes, false)
+			releaseRenderNodes(frame.nodes)
+			m.trace("frame committed image_id=%d sequence=%d", frame.imageID, frame.sequence)
+			if m.animating {
+				return m, nextFrame(m.owner, m.generation)
+			}
+			return m, nil
+		}
+		releaseRenderNodes(frame.nodes)
+		return m, deleteImagesCommand(m.imageIDs, m.quiet())
 	case renderFailedMsg:
 		if msg.owner == m.owner {
 			m.renderErr = msg.err
+			m.renderPending = false
+			m.animating = false
+			m.revision++
 		}
 		return m, nil
 	case tea.MouseClickMsg:
@@ -81,7 +123,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.animating = true
 			m.layoutFrames = 0
 			m.generation++
-			return m, tea.Batch(m.upload(), nextFrame(m.owner, m.generation))
+			m.refreshLabels(false)
+			return m, m.upload()
 		}
 		if msg.Button == tea.MouseLeft {
 			m.trace("drag missed x=%d y=%d", msg.X, msg.Y)
@@ -98,6 +141,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.trace("drag stopped node=%q x=%d y=%d", m.nodes[m.dragging].label, msg.X, msg.Y)
 			m.dragging = -1
 			m.layoutFrames = 0
+			m.refreshLabels(false)
 			return m, nil
 		}
 	case frameMsg:
@@ -109,13 +153,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.layoutFrames++
 		}
 
-		upload := m.upload()
 		if m.dragging < 0 && (m.settled() || m.layoutFrames >= maximumReturnFrames) {
 			m.restoreAnchors()
 			m.animating = false
-			return m, upload
+			return m, m.upload()
 		}
-		return m, tea.Batch(upload, nextFrame(m.owner, m.generation))
+		// The committed frame schedules the next tick, providing render backpressure.
+		return m, m.upload()
 	}
 	return m, nil
 }
@@ -128,15 +172,11 @@ func (m *Model) resize(width, height int) {
 		m.cellWidth = cellWidth
 		m.cellHeight = cellHeight
 		m.nodeRadius = max(3, float64(cellWidth)*0.65)
-		m.labelFace = newLabelFace(max(8, float64(cellHeight)*0.55))
-	}
-	m.placeholder = ""
-	if m.graphics && m.width > 0 && m.height > 0 {
-		m.placeholder, _ = placeholders(m.imageID, m.width, m.height)
 	}
 	m.layoutFrames = 0
 	if len(m.nodes) == 0 || m.width == 0 || m.height == 0 {
 		m.animating = false
+		m.refreshLabels(true)
 		return
 	}
 
@@ -170,6 +210,7 @@ func (m *Model) resize(width, height int) {
 	} else {
 		m.captureAnchors()
 	}
+	m.refreshLabels(true)
 }
 
 // settleInitialLayout calculates stable anchors without encoding intermediate frames.

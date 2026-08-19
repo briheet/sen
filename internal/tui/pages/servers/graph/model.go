@@ -13,13 +13,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/briheet/sen/internal/model"
 	"github.com/charmbracelet/harmonica"
-	"golang.org/x/image/font"
 )
 
 const (
-	framesPerSecond = 30
+	framesPerSecond = 60
 	frequency       = 6.0
-	damping         = 0.25
+	damping         = 1.0 // Critical damping returns nodes without oscillation.
 	maxVelocity     = 24.0
 	settleDistance  = 0.03
 	maxImageID      = 1<<24 - 1
@@ -33,15 +32,19 @@ type point struct {
 }
 
 type node struct {
-	label    string
-	seed     point
-	anchor   point
-	position point
-	velocity point
-	id       model.NodeID
-	depth    int
-	row      int
-	rowCount int
+	label      string
+	seed       point
+	anchor     point
+	position   point
+	velocity   point
+	id         model.NodeID
+	depth      int
+	row        int
+	rowCount   int
+	labelX     int
+	labelY     int
+	labelCellX int
+	labelCellY int
 }
 
 // Model contains the graph layout, motion, and drag state.
@@ -50,12 +53,11 @@ type Model struct {
 	dump           io.Writer
 	renderer       *renderer
 	owner          string
-	placeholder    string
+	labels         string
 	nodes          []node
 	edges          []edgeModel
 	forceBuffer    []point
 	spring         harmonica.Spring
-	labelFace      font.Face
 	dragOffset     point
 	dragging       int
 	height         int
@@ -63,32 +65,39 @@ type Model struct {
 	cellHeight     int
 	cellWidth      int
 	root           int
+	originX        int
+	originY        int
 	layoutFrames   int
 	generation     uint64
 	renderSequence uint64
-	imageID        uint32
+	revision       uint64
+	frontImageID   uint32
+	imageIDs       [2]uint32
 	nodeRadius     float64
 	graphics       bool
 	animating      bool
+	visible        bool
+	renderPending  bool
+	labelsDragging int
 }
 
 // New builds a function graph from analyzed project code.
 func New(owner string, source *model.RuntimeGraph, dump io.Writer) Model {
 	nodes, edges, root := build(source)
 	m := Model{
-		owner:      owner,
-		dump:       dump,
-		nodes:      nodes,
-		edges:      edges,
-		root:       root,
-		spring:     harmonica.NewSpring(harmonica.FPS(framesPerSecond), frequency, damping),
-		cellWidth:  fallbackCellWidth,
-		cellHeight: fallbackCellHeight,
-		nodeRadius: fallbackNodeRadius,
-		labelFace:  newLabelFace(fallbackLabelSize),
-		graphics:   supportsGraphics(),
-		imageID:    nextImageID(),
-		dragging:   -1,
+		owner:          owner,
+		dump:           dump,
+		nodes:          nodes,
+		edges:          edges,
+		root:           root,
+		spring:         harmonica.NewSpring(harmonica.FPS(framesPerSecond), frequency, damping),
+		cellWidth:      fallbackCellWidth,
+		cellHeight:     fallbackCellHeight,
+		nodeRadius:     fallbackNodeRadius,
+		graphics:       supportsGraphics(),
+		imageIDs:       [2]uint32{nextImageID(), nextImageID()},
+		dragging:       -1,
+		labelsDragging: -2,
 	}
 	m.renderer = newRenderer(owner, edges, dump)
 	m.trace("initialized graphics=%t nodes=%d edges=%d term=%q term_program=%q kitty_window=%t",
@@ -98,6 +107,9 @@ func New(owner string, source *model.RuntimeGraph, dump io.Writer) Model {
 
 // Init waits for the viewport before rendering or animating.
 func (Model) Init() tea.Cmd { return nil }
+
+// Revision changes when the graph's native terminal layer changes.
+func (m Model) Revision() uint64 { return m.revision }
 
 func build(source *model.RuntimeGraph) ([]node, []edgeModel, int) {
 	if source == nil || source.Static == nil {

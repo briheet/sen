@@ -8,7 +8,7 @@ import (
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
 	"github.com/briheet/sen/internal/model"
-	"github.com/charmbracelet/x/ansi/kitty"
+	"github.com/briheet/sen/internal/tui/pages"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,16 +25,14 @@ func TestServerRendersGraphViewport(t *testing.T) {
 			Nodes:  map[model.NodeID]*model.Node{1: {Static: static.Nodes[1]}},
 		},
 	}, nil)
-	page, command := server.Update(tea.WindowSizeMsg{Width: 60, Height: 12})
+	page, command := server.Update(pages.ViewportMsg{X: 1, Y: 2, Width: 60, Height: 12, Visible: true})
 	require.NotNil(t, command)
-	page, command = page.Update(tea.RawMsg{})
-	require.Nil(t, command)
 
 	view := page.(Model).View()
 	require.Equal(t, 60, lipgloss.Width(view.Content))
 	require.Equal(t, 12, lipgloss.Height(view.Content))
 	require.Equal(t, tea.MouseModeCellMotion, view.MouseMode)
-	require.Contains(t, view.Content, string(kitty.Placeholder))
+	require.Contains(t, view.Content, "main")
 	require.Contains(t, view.Content, "●")
 	require.NotContains(t, view.Content, "drag nodes")
 }
@@ -46,8 +44,10 @@ func TestServerSwitchesViewsFromPager(t *testing.T) {
 		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
 		Graph:   &model.RuntimeGraph{Static: static, Nodes: map[model.NodeID]*model.Node{1: {Static: static.Nodes[1]}}},
 	}, nil)
-	page, _ := server.Update(tea.WindowSizeMsg{Width: 21, Height: 8})
-	page, _ = page.Update(tea.MouseClickMsg{X: 10, Y: 7, Button: tea.MouseLeft})
+	page, _ := server.Update(pages.ViewportMsg{Width: 21, Height: 8, Visible: true})
+	page, command := page.Update(tea.MouseClickMsg{X: 10, Y: 7, Button: tea.MouseLeft})
 
 	require.Contains(t, page.(Model).View().Content, "Runtime")
+	require.NotNil(t, command)
+	require.Contains(t, command().(tea.RawMsg).Msg, "d=I")
 }
