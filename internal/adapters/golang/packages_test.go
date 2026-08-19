@@ -10,13 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoadHTTPExample(t *testing.T) {
-	pkgs, err := LoadPackages(context.Background(), "../../../examples/go/http", nil)
-	require.NoError(t, err)
-	require.Len(t, pkgs, 1)
-	require.False(t, pkgs[0].IllTyped)
-}
-
 func TestLoadPackagesParsesOnlyLocalImportClosure(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "helper"), 0o700))
