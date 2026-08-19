@@ -3,4 +3,3 @@ bin/
 *.test
 *.pprof
 node_modules/
-examples/

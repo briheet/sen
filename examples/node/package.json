@@ -1,0 +1,11 @@
+{
+  "name": "senbon-example-node",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

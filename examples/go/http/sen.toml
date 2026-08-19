@@ -1,0 +1,9 @@
+[project]
+name = "http-example"
+
+[[services]]
+name = "api"
+type = "server"
+lang = "go"
+path = "."
+run_args = ["--address", ":8080"]
