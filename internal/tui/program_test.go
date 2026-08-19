@@ -93,6 +93,39 @@ func TestProgramEmitsKittyGraph(t *testing.T) {
 	)
 }
 
+func TestProgramPaintsLabelsWhenSwitchingGraphKinds(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	target := &engine.Engine{
+		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
+		Graph:   programRuntimeGraph(),
+	}
+	tm := teatest.NewTestModel(t, initialModel([]*engine.Engine{target}, []config.Service{target.Service}, "", nil),
+		teatest.WithInitialTermSize(60, 20),
+	)
+	t.Cleanup(func() { require.NoError(t, tm.Quit()) })
+
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		placement := bytes.LastIndex(output, []byte("a=p,z=-1"))
+		return placement >= 0 && bytes.Index(output, []byte("main")) < placement
+	})
+
+	// The pager occupies the final row of the server viewport.
+	tm.Send(tea.MouseClickMsg{X: 29, Y: 17, Button: tea.MouseLeft})
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		placement := bytes.LastIndex(output, []byte("a=p,z=-1"))
+		label := bytes.Index(output, []byte("main.go"))
+		return label >= 0 && placement > label
+	})
+
+	tm.Send(tea.MouseClickMsg{X: 32, Y: 17, Button: tea.MouseLeft})
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		placement := bytes.LastIndex(output, []byte("a=p,z=-1"))
+		label := bytes.Index(output, []byte("http.Serve"))
+		return label >= 0 && placement > label
+	})
+}
+
 func TestProgramDeletesGraphWhenSwitchingServices(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	t.Setenv("TERM_PROGRAM", "ghostty")
@@ -124,8 +157,15 @@ func programRuntimeGraph() *domain.RuntimeGraph {
 	static := &domain.StaticGraph{
 		Root: 1,
 		Nodes: map[domain.NodeID]*domain.StaticNode{
-			1: {ID: 1, Name: "main", Out: []domain.NodeID{2}},
-			2: {ID: 2, Name: "handler", In: []domain.NodeID{1}},
+			1:  {ID: 1, Name: "main", Syntax: domain.Syntax{File: 1}, Out: []domain.NodeID{2, 99}},
+			2:  {ID: 2, Name: "handler", In: []domain.NodeID{1}},
+			99: {ID: 99, Name: "Serve", Pkg: 9, In: []domain.NodeID{1}},
+		},
+		Files: map[domain.FileID]*domain.StaticFile{
+			1: {ID: 1, Path: "/project/main.go", Functions: []domain.NodeID{1, 2}},
+		},
+		Packages: map[domain.PackageID]*domain.Package{
+			9: {Name: "http", Path: "net/http"},
 		},
 	}
 	return &domain.RuntimeGraph{
@@ -133,6 +173,9 @@ func programRuntimeGraph() *domain.RuntimeGraph {
 		Nodes: map[domain.NodeID]*domain.Node{
 			1: {Static: static.Nodes[1]},
 			2: {Static: static.Nodes[2]},
+		},
+		Files: map[domain.FileID]*domain.File{
+			1: {Static: static.Files[1]},
 		},
 	}
 }

@@ -16,11 +16,12 @@ import (
 type Model struct {
 	Engine *engine.Engine
 
-	graph    graph.Model
+	graphs   [3]graph.Model
 	pager    paginator.Model
 	width    int
 	height   int
 	viewport pages.ViewportMsg
+	pending  int
 	revision uint64
 }
 
@@ -35,8 +36,13 @@ func New(target *engine.Engine, dump io.Writer) Model {
 	pager.KeyMap.NextPage.SetEnabled(false)
 	return Model{
 		Engine: target,
-		graph:  graph.New(target.Service.Name, target.Graph, dump),
-		pager:  pager,
+		graphs: [3]graph.Model{
+			graph.New(target.Service.Name+":functions", graph.FunctionGraph, target.Graph, dump),
+			graph.New(target.Service.Name+":files", graph.FileGraph, target.Graph, dump),
+			graph.New(target.Service.Name+":dependencies", graph.DependencyGraph, target.Graph, dump),
+		},
+		pager:   pager,
+		pending: -1,
 	}
 }
 
@@ -47,4 +53,10 @@ func (m Model) Name() string { return m.Engine.Service.Name }
 func (m Model) Type() config.ServiceType { return m.Engine.Service.Type }
 
 // Revision changes when the server page's terminal text changes.
-func (m Model) Revision() uint64 { return m.revision + m.graph.Revision() }
+func (m Model) Revision() uint64 {
+	revision := m.revision
+	for index := range m.graphs {
+		revision += m.graphs[index].Revision()
+	}
+	return revision
+}

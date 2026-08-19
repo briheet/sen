@@ -37,17 +37,71 @@ func TestServerRendersGraphViewport(t *testing.T) {
 	require.NotContains(t, view.Content, "drag nodes")
 }
 
-func TestServerSwitchesViewsFromPager(t *testing.T) {
+func TestServerPreservesFunctionLabels(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	static := &model.StaticGraph{Root: 1, Nodes: map[model.NodeID]*model.StaticNode{1: {ID: 1, Name: "main"}}}
+	static := &model.StaticGraph{
+		Root: 1,
+		Nodes: map[model.NodeID]*model.StaticNode{
+			1: {ID: 1, Name: "main", Out: []model.NodeID{2}},
+			2: {ID: 2, Name: "routes", Out: []model.NodeID{3}},
+			3: {ID: 3, Name: "handler"},
+		},
+	}
 	server := New(&engine.Engine{
 		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
-		Graph:   &model.RuntimeGraph{Static: static, Nodes: map[model.NodeID]*model.Node{1: {Static: static.Nodes[1]}}},
+		Graph: &model.RuntimeGraph{
+			Static: static,
+			Nodes: map[model.NodeID]*model.Node{
+				1: {Static: static.Nodes[1]},
+				2: {Static: static.Nodes[2]},
+				3: {Static: static.Nodes[3]},
+			},
+		},
+	}, nil)
+	page, _ := server.Update(pages.ViewportMsg{Width: 80, Height: 16, Visible: true})
+	view := page.View().Content
+
+	require.Contains(t, view, "main")
+	require.Contains(t, view, "routes")
+	require.Contains(t, view, "handler")
+}
+
+func TestServerSwitchesViewsFromPager(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	static := &model.StaticGraph{
+		Root: 1,
+		Nodes: map[model.NodeID]*model.StaticNode{
+			1: {ID: 1, Name: "main", Syntax: model.Syntax{File: 1}},
+		},
+		Files: map[model.FileID]*model.StaticFile{
+			1: {ID: 1, Path: "/project/main.go", Functions: []model.NodeID{1}},
+		},
+	}
+	server := New(&engine.Engine{
+		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
+		Graph: &model.RuntimeGraph{
+			Static: static,
+			Nodes:  map[model.NodeID]*model.Node{1: {Static: static.Nodes[1]}},
+			Files:  map[model.FileID]*model.File{1: {Static: static.Files[1]}},
+		},
 	}, nil)
 	page, _ := server.Update(pages.ViewportMsg{Width: 21, Height: 8, Visible: true})
 	page, command := page.Update(tea.MouseClickMsg{X: 10, Y: 7, Button: tea.MouseLeft})
 
-	require.Contains(t, page.(Model).View().Content, "Runtime")
+	require.Equal(t, 0, page.(Model).pager.Page)
+	require.Equal(t, 1, page.(Model).pending)
 	require.NotNil(t, command)
-	require.Contains(t, command().(tea.RawMsg).Msg, "d=I")
+	page, command = page.Update(switchGraphMsg{service: "api", page: 1})
+	require.Equal(t, 1, page.(Model).pager.Page)
+	require.Contains(t, page.(Model).View().Content, "main.go")
+	require.NotNil(t, command)
+
+	page, command = page.Update(tea.MouseClickMsg{X: 13, Y: 7, Button: tea.MouseLeft})
+	require.Equal(t, 1, page.(Model).pager.Page)
+	require.Equal(t, 2, page.(Model).pending)
+	require.NotNil(t, command)
+	page, command = page.Update(switchGraphMsg{service: "api", page: 2})
+	require.Equal(t, 2, page.(Model).pager.Page)
+	require.Contains(t, page.(Model).View().Content, "main")
+	require.NotNil(t, command)
 }

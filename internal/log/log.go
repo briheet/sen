@@ -25,7 +25,6 @@ const (
 
 // Run owns the logger and process streams for one invocation.
 type Run struct {
-	dir       string
 	path      string
 	file      *os.File
 	debug     *os.File
@@ -82,17 +81,12 @@ func newRun(cacheDir, project string, startedAt time.Time, debug bool) (*Run, er
 	logger := zap.New(zapcore.NewCore(zapcore.NewJSONEncoder(encoder), sink, zap.InfoLevel)).With(
 		zap.String("project", project),
 	)
-	return &Run{dir: dir, path: path, file: file, debug: debugFile, debugPath: debugPath, logger: logger}, nil
+	return &Run{path: path, file: file, debug: debugFile, debugPath: debugPath, logger: logger}, nil
 }
 
 // Logger returns the run's structured application logger.
 func (r *Run) Logger() *zap.Logger {
 	return r.logger
-}
-
-// Dir returns the directory reserved for this run's logs.
-func (r *Run) Dir() string {
-	return r.dir
 }
 
 // Path returns the engine log path.

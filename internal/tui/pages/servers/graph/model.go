@@ -22,9 +22,23 @@ const (
 	maxVelocity     = 24.0
 	settleDistance  = 0.03
 	maxImageID      = 1<<24 - 1
+	dependencyScale = 0.18
+	maximumScale    = 2.0
 )
 
 var imageIDs atomic.Uint32
+
+// Kind selects the analyzed relationship represented by a graph.
+type Kind uint8
+
+const (
+	// FunctionGraph shows project functions and their call relationships.
+	FunctionGraph Kind = iota
+	// FileGraph collapses calls into source-file relationships.
+	FileGraph
+	// DependencyGraph sizes function nodes by direct connectivity.
+	DependencyGraph
+)
 
 type point struct {
 	x float64
@@ -33,11 +47,12 @@ type point struct {
 
 type node struct {
 	label      string
-	seed       point
 	anchor     point
 	position   point
+	rendered   point
 	velocity   point
-	id         model.NodeID
+	id         uint64
+	scale      float64
 	depth      int
 	row        int
 	rowCount   int
@@ -73,19 +88,21 @@ type Model struct {
 	revision       uint64
 	frontImageID   uint32
 	imageIDs       [2]uint32
+	labelsDragging int
 	nodeRadius     float64
+	kind           Kind
 	graphics       bool
 	animating      bool
 	visible        bool
 	renderPending  bool
-	labelsDragging int
 }
 
-// New builds a function graph from analyzed project code.
-func New(owner string, source *model.RuntimeGraph, dump io.Writer) Model {
-	nodes, edges, root := build(source)
+// New builds the selected graph from analyzed project code.
+func New(owner string, kind Kind, source *model.RuntimeGraph, dump io.Writer) Model {
+	nodes, edges, root := build(source, kind)
 	m := Model{
 		owner:          owner,
+		kind:           kind,
 		dump:           dump,
 		nodes:          nodes,
 		edges:          edges,
@@ -111,41 +128,74 @@ func (Model) Init() tea.Cmd { return nil }
 // Revision changes when the graph's native terminal layer changes.
 func (m Model) Revision() uint64 { return m.revision }
 
-func build(source *model.RuntimeGraph) ([]node, []edgeModel, int) {
+func build(source *model.RuntimeGraph, kind Kind) ([]node, []edgeModel, int) {
+	if kind == FileGraph {
+		return buildFiles(source)
+	}
+	return buildFunctions(source, kind == DependencyGraph)
+}
+
+func buildFunctions(source *model.RuntimeGraph, dependencies bool) ([]node, []edgeModel, int) {
 	if source == nil || source.Static == nil {
 		return nil, nil, -1
 	}
 
-	ids := make([]model.NodeID, 0, len(source.Nodes))
+	localIDs := make([]model.NodeID, 0, len(source.Nodes))
 	for id, runtimeNode := range source.Nodes {
 		if runtimeNode != nil && runtimeNode.Static != nil {
-			ids = append(ids, id)
+			localIDs = append(localIDs, id)
 		}
 	}
-	slices.Sort(ids)
-	if len(ids) == 0 {
+	slices.Sort(localIDs)
+	if len(localIDs) == 0 {
 		return nil, nil, -1
+	}
+
+	ids := append([]model.NodeID(nil), localIDs...)
+	if dependencies {
+		seen := make(map[model.NodeID]struct{}, len(localIDs))
+		for _, id := range localIDs {
+			seen[id] = struct{}{}
+		}
+		for _, id := range localIDs {
+			function := source.Nodes[id].Static
+			for _, targets := range [][]model.NodeID{function.Out, function.Function.References, function.Function.AnonFuncs} {
+				for _, target := range targets {
+					if _, exists := seen[target]; exists || source.Static.Nodes[target] == nil {
+						continue
+					}
+					seen[target] = struct{}{}
+					ids = append(ids, target)
+				}
+			}
+		}
+		slices.Sort(ids)
 	}
 
 	indices := make(map[model.NodeID]int, len(ids))
 	names := make(map[string]int, len(ids))
 	for index, id := range ids {
 		indices[id] = index
-		names[source.Nodes[id].Static.Name]++
+		names[source.Static.Nodes[id].Name]++
 	}
 	nodes := make([]node, len(ids))
 	for index, id := range ids {
-		static := source.Nodes[id].Static
-		nodes[index] = node{id: id, label: functionLabel(source.Static, static, names[static.Name] > 1)}
+		static := source.Static.Nodes[id]
+		label := functionLabel(source.Static, static, names[static.Name] > 1)
+		if _, local := source.Nodes[id]; dependencies && !local {
+			label = dependencyLabel(source.Static, static, names[static.Name] > 1)
+		}
+		nodes[index] = node{id: uint64(id), label: label, scale: 1}
 	}
 
 	edgeCapacity := 0
-	for _, id := range ids {
+	for _, id := range localIDs {
 		static := source.Nodes[id].Static
 		edgeCapacity += len(static.Out) + len(static.Function.References) + len(static.Function.AnonFuncs)
 	}
 	edges := make([]edgeModel, 0, edgeCapacity)
-	for from, id := range ids {
+	for _, id := range localIDs {
+		from := indices[id]
 		static := source.Nodes[id].Static
 		for _, targets := range [][]model.NodeID{static.Out, static.Function.References, static.Function.AnonFuncs} {
 			for _, target := range targets {
@@ -155,18 +205,89 @@ func build(source *model.RuntimeGraph) ([]node, []edgeModel, int) {
 			}
 		}
 	}
+	edges = normalizeEdges(edges)
+	if dependencies {
+		scaleDependencies(nodes, edges)
+	}
+	root := graphRoot(source, localIDs, indices)
+	assignDepths(nodes, edges, root)
+	return nodes, edges, root
+}
+
+func buildFiles(source *model.RuntimeGraph) ([]node, []edgeModel, int) {
+	if source == nil || source.Static == nil {
+		return nil, nil, -1
+	}
+
+	ids := make([]model.FileID, 0, len(source.Files))
+	for id, runtimeFile := range source.Files {
+		if runtimeFile != nil && runtimeFile.Static != nil {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	if len(ids) == 0 {
+		return nil, nil, -1
+	}
+
+	indices := make(map[model.FileID]int, len(ids))
+	names := make(map[string]int, len(ids))
+	for index, id := range ids {
+		indices[id] = index
+		names[filepath.Base(source.Files[id].Static.Path)]++
+	}
+	nodes := make([]node, len(ids))
+	edges := make([]edgeModel, 0, len(ids))
+	for from, id := range ids {
+		file := source.Files[id].Static
+		nodes[from] = node{id: uint64(id), label: fileLabel(file.Path, names[filepath.Base(file.Path)] > 1), scale: 1}
+		for _, functionID := range file.Functions {
+			function := source.Nodes[functionID]
+			if function == nil || function.Static == nil {
+				continue
+			}
+			for _, targets := range [][]model.NodeID{function.Static.Out, function.Static.Function.References, function.Static.Function.AnonFuncs} {
+				for _, target := range targets {
+					dependency := source.Static.Nodes[target]
+					if dependency == nil {
+						continue
+					}
+					if to, ok := indices[dependency.Syntax.File]; ok && to != from {
+						edges = append(edges, edgeModel{from: from, to: to})
+					}
+				}
+			}
+		}
+	}
+	edges = normalizeEdges(edges)
+	root := fileRoot(source, ids, indices, edges)
+	assignDepths(nodes, edges, root)
+	return nodes, edges, root
+}
+
+func normalizeEdges(edges []edgeModel) []edgeModel {
 	slices.SortFunc(edges, func(left, right edgeModel) int {
 		if left.from != right.from {
 			return left.from - right.from
 		}
 		return left.to - right.to
 	})
-	edges = slices.CompactFunc(edges, func(left, right edgeModel) bool {
+	return slices.CompactFunc(edges, func(left, right edgeModel) bool {
 		return left.from == right.from && left.to == right.to
 	})
-	root := graphRoot(source, ids, indices)
-	assignDepths(nodes, edges, root)
-	return nodes, edges, root
+}
+
+func scaleDependencies(nodes []node, edges []edgeModel) {
+	degrees := make([]int, len(nodes))
+	for _, edge := range edges {
+		if edge.from != edge.to {
+			degrees[edge.from]++
+			degrees[edge.to]++
+		}
+	}
+	for index := range nodes {
+		nodes[index].scale = min(maximumScale, 1+math.Sqrt(float64(degrees[index]))*dependencyScale)
+	}
 }
 
 func functionLabel(graph *model.StaticGraph, function *model.StaticNode, duplicate bool) string {
@@ -179,6 +300,30 @@ func functionLabel(graph *model.StaticGraph, function *model.StaticNode, duplica
 		return name
 	}
 	return fmt.Sprintf("%s @ %s:%d", name, filepath.Base(file.Path), function.Syntax.Start.Line)
+}
+
+func dependencyLabel(graph *model.StaticGraph, function *model.StaticNode, duplicate bool) string {
+	name := functionLabel(graph, function, duplicate)
+	pkg := graph.Packages[function.Pkg]
+	if pkg == nil {
+		return name
+	}
+	prefix := pkg.Name
+	if prefix == "" {
+		prefix = filepath.Base(pkg.Path)
+	}
+	if prefix == "" {
+		return name
+	}
+	return prefix + "." + name
+}
+
+func fileLabel(path string, duplicate bool) string {
+	name := filepath.Base(path)
+	if !duplicate {
+		return name
+	}
+	return filepath.Join(filepath.Base(filepath.Dir(path)), name)
 }
 
 func graphRoot(source *model.RuntimeGraph, ids []model.NodeID, indices map[model.NodeID]int) int {
@@ -201,6 +346,31 @@ func graphRoot(source *model.RuntimeGraph, ids []model.NodeID, indices map[model
 	for _, id := range ids {
 		if localRoot(id) {
 			return indices[id]
+		}
+	}
+	return 0
+}
+
+func fileRoot(source *model.RuntimeGraph, ids []model.FileID, indices map[model.FileID]int, edges []edgeModel) int {
+	if root := source.Static.Nodes[source.Static.Root]; root != nil {
+		if index, ok := indices[root.Syntax.File]; ok {
+			return index
+		}
+	}
+	for _, id := range ids {
+		for _, functionID := range source.Files[id].Static.Functions {
+			if function := source.Nodes[functionID]; function != nil && function.Static.Name == "main" {
+				return indices[id]
+			}
+		}
+	}
+	incoming := make([]bool, len(ids))
+	for _, edge := range edges {
+		incoming[edge.to] = true
+	}
+	for index := range ids {
+		if !incoming[index] {
+			return index
 		}
 	}
 	return 0

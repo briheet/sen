@@ -19,9 +19,8 @@ func TestRunWritesStructuredServiceLogs(t *testing.T) {
 	require.NoError(t, err)
 
 	wantDir := filepath.Join(cacheDir, applicationName, "my-backend-20260818T102030.000000123Z")
-	require.Equal(t, wantDir, run.Dir())
 	require.Equal(t, filepath.Join(wantDir, engineLogName), run.Path())
-	dirInfo, err := os.Stat(run.Dir())
+	dirInfo, err := os.Stat(filepath.Dir(run.Path()))
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
 	fileInfo, err := os.Stat(run.Path())
@@ -60,7 +59,7 @@ func TestRunRejectsProjectPath(t *testing.T) {
 func TestRunCreatesTUIDebugLog(t *testing.T) {
 	run, err := newRun(t.TempDir(), "my-backend", time.Now(), true)
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(run.Dir(), tuiLogName), run.DebugPath())
+	require.Equal(t, filepath.Join(filepath.Dir(run.Path()), tuiLogName), run.DebugPath())
 
 	_, err = run.DebugWriter().Write([]byte("message\n"))
 	require.NoError(t, err)

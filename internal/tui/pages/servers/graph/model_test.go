@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -19,9 +20,9 @@ import (
 )
 
 func TestGraphBuildsProjectFunctionsAndCalls(t *testing.T) {
-	graph := New("api", testRuntimeGraph(), nil)
+	graph := New("api", FunctionGraph, testRuntimeGraph(), nil)
 
-	require.Equal(t, []model.NodeID{1, 2, 3}, []model.NodeID{
+	require.Equal(t, []uint64{1, 2, 3}, []uint64{
 		graph.nodes[0].id,
 		graph.nodes[1].id,
 		graph.nodes[2].id,
@@ -35,11 +36,37 @@ func TestGraphBuildsProjectFunctionsAndCalls(t *testing.T) {
 	require.Equal(t, []edgeModel{{from: 0, to: 1}, {from: 0, to: 2}, {from: 1, to: 2}}, graph.edges)
 }
 
+func TestGraphBuildsProjectFilesAndCalls(t *testing.T) {
+	graph := New("api", FileGraph, testRuntimeGraph(), nil)
+
+	require.Equal(t, []uint64{1, 2}, []uint64{graph.nodes[0].id, graph.nodes[1].id})
+	require.Equal(t, []string{"main.go", "handlers.go"}, []string{graph.nodes[0].label, graph.nodes[1].label})
+	require.Equal(t, []edgeModel{{from: 0, to: 1}}, graph.edges)
+	require.Equal(t, 0, graph.root)
+}
+
+func TestDependencyGraphScalesConnectedFunctions(t *testing.T) {
+	source := testRuntimeGraph()
+	source.Static.Nodes[4] = &model.StaticNode{ID: 4, Name: "health", Syntax: model.Syntax{File: 2}}
+	source.Static.Nodes[1].Out = append(source.Static.Nodes[1].Out, 4)
+	source.Static.Files[2].Functions = append(source.Static.Files[2].Functions, 4)
+	source.Nodes[4] = &model.Node{Static: source.Static.Nodes[4]}
+	graph := New("api", DependencyGraph, source, nil)
+
+	require.Contains(t, []uint64{graph.nodes[0].id, graph.nodes[1].id, graph.nodes[2].id, graph.nodes[3].id, graph.nodes[4].id}, uint64(99))
+	require.Equal(t, "http.external", graph.nodes[4].label)
+	require.Greater(t, graph.nodes[0].scale, graph.nodes[3].scale)
+	for _, node := range graph.nodes {
+		require.GreaterOrEqual(t, node.scale, 1.0)
+		require.LessOrEqual(t, node.scale, 2.0)
+	}
+}
+
 func TestGraphDisambiguatesDuplicateFunctionNames(t *testing.T) {
 	source := testRuntimeGraph()
 	source.Static.Nodes[2].Name = "handler"
 	source.Nodes[2].Static.Name = "handler"
-	graph := New("api", source, nil)
+	graph := New("api", FunctionGraph, source, nil)
 
 	require.Equal(t, "handler @ main.go:8", graph.nodes[1].label)
 	require.Equal(t, "handler @ handlers.go:4", graph.nodes[2].label)
@@ -47,16 +74,19 @@ func TestGraphDisambiguatesDuplicateFunctionNames(t *testing.T) {
 
 func TestGraphRendersNativeLabels(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, command := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
-	view := graph.View()
+	for _, kind := range []Kind{FunctionGraph, FileGraph, DependencyGraph} {
+		graph, command := New("api", kind, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+		view := graph.View()
 
-	require.NotNil(t, command)
-	require.Equal(t, 80, lipgloss.Width(view))
-	require.Equal(t, 16, lipgloss.Height(view))
-	require.Contains(t, view, "main")
-	require.Contains(t, view, "routes")
-	require.False(t, strings.ContainsRune(view, kitty.Placeholder))
-	require.Equal(t, 1, graph.nodes[graph.root].labelX)
+		require.NotNil(t, command)
+		require.Equal(t, 80, lipgloss.Width(view))
+		require.Equal(t, 16, lipgloss.Height(view))
+		for _, node := range graph.nodes {
+			require.Contains(t, view, node.label)
+		}
+		require.False(t, strings.ContainsRune(view, kitty.Placeholder))
+		require.GreaterOrEqual(t, graph.nodes[graph.root].labelX, 0)
+	}
 }
 
 func TestRasterCellSizeCapsWorkAndPreservesAspectRatio(t *testing.T) {
@@ -70,44 +100,86 @@ func TestRasterCellSizeCapsWorkAndPreservesAspectRatio(t *testing.T) {
 	require.Equal(t, 20, height)
 }
 
-func TestGraphCalculatesBaseEdgeLengthBeforeRendering(t *testing.T) {
+func TestGraphDistributesNodesAcrossViewport(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 
-	for _, edge := range graph.edges {
-		require.Equal(t, baseEdgeLength, edge.rest)
-		if graph.nodes[edge.to].depth == graph.nodes[edge.from].depth+1 {
-			require.LessOrEqual(t,
-				distance(graph.nodes[edge.from].position, graph.nodes[edge.to].position),
-				baseEdgeLength*1.2,
-			)
-		}
+	maximumDepth := 0
+	for _, node := range graph.nodes {
+		maximumDepth = max(maximumDepth, node.depth)
 	}
-
-	graph = settleLayout(graph)
+	availableWidth := float64(graph.width - nodeWidth - int(graphInsetX))
+	availableHeight := float64(graph.height - 2 - int(graphInsetY))
+	for index, node := range graph.nodes {
+		if index == graph.root {
+			require.Equal(t, point{}, node.position)
+			continue
+		}
+		require.InDelta(t, availableWidth*float64(node.depth)/float64(maximumDepth), node.position.x, 0.001)
+		require.InDelta(t, availableHeight*float64(node.row+1)/float64(node.rowCount+1), node.position.y, 0.001)
+	}
 	for _, edge := range graph.edges {
-		require.Equal(t, baseEdgeLength, edge.rest)
+		require.Equal(t, max(baseEdgeLength, distance(graph.nodes[edge.from].position, graph.nodes[edge.to].position)), edge.rest)
 	}
 }
 
-func TestGraphTransmitsPNGBeforePhysicalPlacement(t *testing.T) {
-	t.Setenv("TERM", "xterm-kitty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(pages.ViewportMsg{X: 3, Y: 4, Width: 40, Height: 10, Visible: true})
-	sequence := renderOutput(t, &graph)
-
-	for _, option := range []string{"f=100", "q=2", "a=p", "c=40", "r=10", "z=-1", "C=1", "\x1b[5;4H"} {
-		require.Contains(t, sequence, option)
+func TestGraphDistributesDenseLevelWithoutStacking(t *testing.T) {
+	static := &model.StaticGraph{Root: 1, Nodes: make(map[model.NodeID]*model.StaticNode)}
+	static.Nodes[1] = &model.StaticNode{ID: 1, Name: "main"}
+	source := &model.RuntimeGraph{
+		Static: static,
+		Nodes:  map[model.NodeID]*model.Node{1: {Static: static.Nodes[1]}},
 	}
-	require.NotContains(t, sequence, "U=1")
-	require.Contains(t, sequence, "\x1b[?2026h")
-	require.Contains(t, sequence, "\x1b[?2026l")
-	require.Less(t, strings.Index(sequence, "f=100"), strings.Index(sequence, "a=p"))
+	for id := model.NodeID(2); id <= 36; id++ {
+		static.Nodes[id] = &model.StaticNode{ID: id, Name: fmt.Sprintf("dependency-%d", id)}
+		static.Nodes[1].Out = append(static.Nodes[1].Out, id)
+	}
+	graph, _ := New("api", DependencyGraph, source, nil).Update(visibleViewport(176, 42))
+
+	rows := make(map[int]struct{}, len(graph.nodes)-1)
+	for index, node := range graph.nodes {
+		if index != graph.root {
+			rows[int(math.Round(node.position.y))] = struct{}{}
+		}
+	}
+	require.Len(t, rows, len(graph.nodes)-1)
+}
+
+func TestGraphTransmitsPNGForEveryGraphKind(t *testing.T) {
+	t.Setenv("TERM", "xterm-kitty")
+	for _, kind := range []Kind{FunctionGraph, FileGraph, DependencyGraph} {
+		graph, _ := New("api", kind, testRuntimeGraph(), nil).Update(pages.ViewportMsg{X: 3, Y: 4, Width: 40, Height: 10, Visible: true})
+		sequence := renderOutput(t, &graph)
+
+		for _, option := range []string{"f=100", "q=2", "a=p", "c=40", "r=10", "z=-1", "C=1", "\x1b[5;4H"} {
+			require.Contains(t, sequence, option)
+		}
+		require.NotContains(t, sequence, "U=1")
+		require.Contains(t, sequence, "\x1b[?2026h")
+		require.Contains(t, sequence, "\x1b[?2026l")
+		require.Less(t, strings.Index(sequence, "f=100"), strings.Index(sequence, "a=p"))
+	}
+}
+
+func TestRenderedFramePreservesLabelsForEveryGraphKind(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	for _, kind := range []Kind{FunctionGraph, FileGraph, DependencyGraph} {
+		graph, _ := New("api", kind, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+		before := graph.View()
+		ready := graph.upload()().(renderReadyMsg)
+
+		graph, command := graph.Update(ready)
+
+		require.NotNil(t, command)
+		require.Equal(t, before, graph.View(), "graph kind %d changed labels after rendering", kind)
+		graph, _ = graph.Update(command().(tea.RawMsg))
+	}
 }
 
 func TestGraphDebugLogKeepsTerminalErrors(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	var dump bytes.Buffer
-	graph, _ := New("api", testRuntimeGraph(), &dump).Update(visibleViewport(40, 10))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), &dump).Update(visibleViewport(40, 10))
 	output := renderOutput(t, &graph)
 
 	require.Contains(t, output, "q=1")
@@ -117,7 +189,7 @@ func TestGraphDebugLogKeepsTerminalErrors(t *testing.T) {
 
 func TestRenderReadyDebugSummaryOmitsImagePayload(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(40, 10))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(40, 10))
 	ready := graph.upload()().(renderReadyMsg)
 
 	require.Contains(t, ready.DebugSummary(), "render ready sequence=1")
@@ -126,7 +198,7 @@ func TestRenderReadyDebugSummaryOmitsImagePayload(t *testing.T) {
 
 func TestGraphAlternatesImagesAndDeletesPreviousFrame(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(40, 10))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(40, 10))
 	firstID := graph.imageIDs[0]
 	first := renderOutput(t, &graph)
 
@@ -140,7 +212,7 @@ func TestGraphAlternatesImagesAndDeletesPreviousFrame(t *testing.T) {
 
 func TestHiddenGraphCancelsFramesAndDeletesImages(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(40, 10))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(40, 10))
 	_ = renderOutput(t, &graph)
 
 	graph, command := graph.Update(pages.ViewportMsg{Width: 40, Height: 10})
@@ -154,7 +226,7 @@ func TestHiddenGraphCancelsFramesAndDeletesImages(t *testing.T) {
 
 func TestLabelRevisionChangesOnlyAfterCrossingCell(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 	revision := graph.Revision()
 
 	graph.nodes[1].position.x += 0.01
@@ -175,7 +247,7 @@ func TestLabelCellUsesHysteresis(t *testing.T) {
 
 func TestMovingLabelDoesNotRepositionOtherLabels(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 	stationaryCell := graph.nodes[2].labelCellX
 	graph.nodes[1].position.x = float64(graph.nodes[1].labelCellX) + 0.8 - graphInsetX
 	graph.nodes[2].position.x = float64(stationaryCell) + 0.6 - graphInsetX
@@ -187,7 +259,7 @@ func TestMovingLabelDoesNotRepositionOtherLabels(t *testing.T) {
 
 func TestMovingLabelCommitsWithRenderedFrame(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 	_ = renderOutput(t, &graph)
 	revision := graph.Revision()
 	graph.dragging = 1
@@ -198,16 +270,20 @@ func TestMovingLabelCommitsWithRenderedFrame(t *testing.T) {
 	require.NotNil(t, command)
 	require.Equal(t, revision, graph.Revision(), "label must wait for its image frame")
 	ready := command().(renderReadyMsg)
+	for index := range graph.nodes {
+		require.Equal(t, graph.nodes[index].position, graph.nodes[index].rendered)
+	}
 	graph, command = graph.Update(ready)
-	require.Equal(t, revision, graph.Revision())
+	require.Greater(t, graph.Revision(), revision)
+	committedRevision := graph.Revision()
 	raw := command().(tea.RawMsg)
 	graph, _ = graph.Update(raw)
-	require.Greater(t, graph.Revision(), revision)
+	require.Equal(t, committedRevision, graph.Revision())
 }
 
 func TestGraphDrawsContinuousEdgesUnderNodes(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 	canvas := graph.renderer.renderImage(renderRequest{
 		nodes:      graph.nodes,
 		dragging:   graph.dragging,
@@ -251,7 +327,7 @@ func TestGraphDrawsContinuousEdgesUnderNodes(t *testing.T) {
 
 func TestGraphUsesPalettedFrames(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 	canvas := graph.renderer.renderImage(renderRequest{
 		nodes:      graph.nodes,
 		dragging:   graph.dragging,
@@ -274,7 +350,7 @@ func TestGraphUsesPalettedFrames(t *testing.T) {
 
 func TestGraphAppliesRenderBackpressure(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(200, 40))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(200, 40))
 	command := graph.upload()
 	require.NotNil(t, command)
 	for range 20 {
@@ -292,7 +368,7 @@ func pixelAlpha(canvas image.Image, x, y int) uint32 {
 
 func TestGraphSettlesAndPinsRoot(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	graph = settleLayout(graph)
 
 	require.False(t, graph.animating)
@@ -306,7 +382,7 @@ func TestGraphSettlesAndPinsRoot(t *testing.T) {
 
 func TestRootCannotBeDragged(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	graph = settleLayout(graph)
 	root := screenPoint(graph.nodes[graph.root].position)
 
@@ -319,7 +395,7 @@ func TestRootCannotBeDragged(t *testing.T) {
 
 func TestDraggedNodeJigglesNeighborAndReturnsToAnchor(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	graph = settleLayout(graph)
 	dragged := 1
 	neighbor := 2
@@ -354,7 +430,7 @@ func TestDraggedNodeJigglesNeighborAndReturnsToAnchor(t *testing.T) {
 
 func TestResizePresettlesLayout(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	graph = settleLayout(graph)
 	generation := graph.generation
 
@@ -369,8 +445,8 @@ func TestResizePresettlesLayout(t *testing.T) {
 }
 
 func TestGraphUsesUniqueImageIDs(t *testing.T) {
-	first := New("api", testRuntimeGraph(), nil)
-	second := New("worker", testRuntimeGraph(), nil)
+	first := New("api", FunctionGraph, testRuntimeGraph(), nil)
+	second := New("worker", FunctionGraph, testRuntimeGraph(), nil)
 	require.NotZero(t, first.imageIDs[0])
 	require.NotEqual(t, first.imageIDs, second.imageIDs)
 }
@@ -379,7 +455,7 @@ func TestUnsupportedTerminalHasTextFallback(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("TERM_PROGRAM", "Alacritty")
 	t.Setenv("KITTY_WINDOW_ID", "")
-	graph, command := New("api", testRuntimeGraph(), nil).Update(visibleViewport(60, 12))
+	graph, command := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(60, 12))
 	view := graph.View()
 
 	require.Nil(t, command)
@@ -389,14 +465,14 @@ func TestUnsupportedTerminalHasTextFallback(t *testing.T) {
 
 func TestEmptyGraphHasTextFallback(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	graph, command := New("api", nil, nil).Update(visibleViewport(60, 12))
+	graph, command := New("api", FunctionGraph, nil, nil).Update(visibleViewport(60, 12))
 
 	require.Nil(t, command)
 	require.Contains(t, graph.View(), "No project functions found")
 }
 
 func TestGraphIgnoresFramesForAnotherServer(t *testing.T) {
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 	before := graph.nodes[1].position
 
 	graph, command := graph.Update(frameMsg{owner: "worker", generation: graph.generation})
@@ -407,7 +483,7 @@ func TestGraphIgnoresFramesForAnotherServer(t *testing.T) {
 
 func BenchmarkGraphUpload(b *testing.B) {
 	b.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	wireBytes := len(renderOutput(b, &graph))
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -419,7 +495,7 @@ func BenchmarkGraphUpload(b *testing.B) {
 
 func BenchmarkGraphLargeUpload(b *testing.B) {
 	b.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(176, 42))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(176, 42))
 	graph.cellWidth, graph.cellHeight = rasterCellSize(15, 38)
 	graph.nodeRadius = max(3, float64(graph.cellWidth)*0.65)
 	wireBytes := len(renderOutput(b, &graph))
@@ -435,13 +511,13 @@ func BenchmarkGraphBuild(b *testing.B) {
 	source := testRuntimeGraph()
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = New("api", source, nil)
+		_ = New("api", FunctionGraph, source, nil)
 	}
 }
 
 func BenchmarkGraphView(b *testing.B) {
 	b.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	b.ReportAllocs()
 	for b.Loop() {
 		if graph.View() == "" {
@@ -469,7 +545,7 @@ func renderOutput(tb testing.TB, graph *Model) string {
 }
 
 func settleLayout(graph Model) Model {
-	for frame := 0; frame < maximumLayoutFrames+1 && graph.animating; frame++ {
+	for frame := 0; frame < maximumReturnFrames+1 && graph.animating; frame++ {
 		graph, _ = graph.Update(frameMsg{owner: graph.owner, generation: graph.generation})
 	}
 	return graph
@@ -504,12 +580,15 @@ func testRuntimeGraph() *model.RuntimeGraph {
 				Syntax: model.Syntax{File: 2, Start: model.Position{Line: 4}},
 				In:     []model.NodeID{1, 2},
 			},
-			99:  {ID: 99, Name: "external"},
+			99:  {ID: 99, Name: "external", Pkg: 9},
 			100: {ID: 100, Name: "root", Out: []model.NodeID{1}},
 		},
 		Files: map[model.FileID]*model.StaticFile{
-			1: {ID: 1, Path: "/project/main.go", Functions: []model.NodeID{1, 2}},
-			2: {ID: 2, Path: "/project/handlers.go", Functions: []model.NodeID{3}},
+			1: {ID: 1, Path: "/project/main.go", Functions: []model.NodeID{1, 2}, Calls: []model.FileID{2}},
+			2: {ID: 2, Path: "/project/handlers.go", Functions: []model.NodeID{3}, CalledBy: []model.FileID{1}},
+		},
+		Packages: map[model.PackageID]*model.Package{
+			9: {Name: "http", Path: "net/http"},
 		},
 	}
 	return &model.RuntimeGraph{
@@ -518,6 +597,10 @@ func testRuntimeGraph() *model.RuntimeGraph {
 			1: {Static: static.Nodes[1]},
 			2: {Static: static.Nodes[2]},
 			3: {Static: static.Nodes[3]},
+		},
+		Files: map[model.FileID]*model.File{
+			1: {Static: static.Files[1]},
+			2: {Static: static.Files[2]},
 		},
 	}
 }

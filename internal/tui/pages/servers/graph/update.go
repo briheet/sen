@@ -9,17 +9,10 @@ import (
 )
 
 const (
-	minimumLayoutFrames = 30
-	maximumLayoutFrames = 90
 	maximumReturnFrames = 120
 	baseEdgeLength      = 20.0
-	layoutEdgeStrength  = 1.8
 	returnEdgeStrength  = 0.7
-	seedStrength        = 0.35
-	repulsionDistance   = 12.0
-	repulsionStrength   = 20.0
 	collisionStrength   = 16.0
-	velocityDamping     = 0.88
 	nodeHalfWidth       = 1.0
 	nodeHalfHeight      = 1.5
 	nodeWidth           = 2
@@ -84,9 +77,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case renderReadyMsg:
 		frame := msg.frame
 		if frame.owner != m.owner || frame.sequence != m.renderSequence || !m.visible {
-			releaseRenderNodes(frame.nodes)
+			releaseRenderNodes(frame.buffer)
 			return m, nil
 		}
+		m.refreshRenderedLabels(false)
 		return m, tea.Raw(frame)
 	case tea.RawMsg:
 		frame, ok := msg.Msg.(frameOutput)
@@ -96,15 +90,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if frame.sequence == m.renderSequence && m.visible {
 			m.frontImageID = frame.imageID
 			m.renderPending = false
-			m.refreshLabelsFrom(frame.nodes, false)
-			releaseRenderNodes(frame.nodes)
+			releaseRenderNodes(frame.buffer)
 			m.trace("frame committed image_id=%d sequence=%d", frame.imageID, frame.sequence)
 			if m.animating {
 				return m, nextFrame(m.owner, m.generation)
 			}
 			return m, nil
 		}
-		releaseRenderNodes(frame.nodes)
+		releaseRenderNodes(frame.buffer)
 		return m, deleteImagesCommand(m.imageIDs, m.quiet())
 	case renderFailedMsg:
 		if msg.owner == m.owner {
@@ -115,7 +108,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseClickMsg:
-		if !m.graphics {
+		if !m.graphics || !m.visible {
 			return m, nil
 		}
 		if msg.Button == tea.MouseLeft && m.beginDrag(msg.X, msg.Y) {
@@ -130,13 +123,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.trace("drag missed x=%d y=%d", msg.X, msg.Y)
 		}
 	case tea.MouseMotionMsg:
-		if m.graphics && m.dragging >= 0 {
+		if m.graphics && m.visible && m.dragging >= 0 {
 			m.moveDragged(msg.X, msg.Y)
 			// The frame clock renders the latest position and coalesces mouse events.
 			return m, nil
 		}
 	case tea.MouseReleaseMsg:
-		if m.graphics && msg.Button == tea.MouseLeft && m.dragging >= 0 {
+		if m.graphics && m.visible && msg.Button == tea.MouseLeft && m.dragging >= 0 {
 			m.moveDragged(msg.X, msg.Y)
 			m.trace("drag stopped node=%q x=%d y=%d", m.nodes[m.dragging].label, msg.X, msg.Y)
 			m.dragging = -1
@@ -184,71 +177,35 @@ func (m *Model) resize(width, height int) {
 	for _, node := range m.nodes {
 		maximumDepth = max(maximumDepth, node.depth)
 	}
-	edgeLength := min(baseEdgeLength, max(4, float64(m.width-nodeWidth-int(graphInsetX))/float64(max(1, maximumDepth))))
-	rowGap := min(8, max(4, edgeLength/3))
+	availableWidth := float64(max(0, m.width-nodeWidth-int(graphInsetX)))
+	availableHeight := float64(max(0, m.height-2-int(graphInsetY)))
 	for index := range m.nodes {
 		node := &m.nodes[index]
 		if index == m.root {
-			node.seed = point{x: 0, y: 0}
+			node.position = point{}
 		} else {
-			node.seed = point{
-				x: float64(node.depth) * edgeLength,
-				y: 2 + float64(node.row)*rowGap,
+			node.position = point{
+				x: availableWidth * float64(node.depth) / float64(max(1, maximumDepth)),
+				y: availableHeight * float64(node.row+1) / float64(node.rowCount+1),
 			}
 		}
-		node.position = m.clamp(node.seed)
-		node.anchor = point{}
+		node.position = m.clamp(node.position)
 		node.velocity = point{}
 	}
 	m.pinRoot()
 	for index := range m.edges {
-		m.edges[index].rest = edgeLength
+		edge := &m.edges[index]
+		edge.rest = max(baseEdgeLength, distance(m.nodes[edge.from].position, m.nodes[edge.to].position))
 	}
 	m.dragging = -1
-	if len(m.nodes) > 1 {
-		m.settleInitialLayout()
-	} else {
-		m.captureAnchors()
-	}
+	m.animating = false
+	m.captureAnchors()
+	m.trace("layout distributed width=%.0f height=%.0f", availableWidth, availableHeight)
 	m.refreshLabels(true)
 }
 
-// settleInitialLayout calculates stable anchors without encoding intermediate frames.
-func (m *Model) settleInitialLayout() {
-	frames := 0
-	for frames = 1; frames <= maximumLayoutFrames; frames++ {
-		motion := m.stepLayout()
-		if frames >= minimumLayoutFrames && motion < settleDistance {
-			break
-		}
-	}
-	m.captureAnchors()
-	m.animating = false
-	m.layoutFrames = 0
-	m.trace("layout settled frames=%d", min(frames, maximumLayoutFrames))
-}
-
-func (m *Model) stepLayout() float64 {
-	forces := m.forces(true)
-	maximumMotion := 0.0
-	const deltaTime = 1.0 / framesPerSecond
-	for index := range m.nodes {
-		if index == m.root {
-			continue
-		}
-		node := &m.nodes[index]
-		node.velocity.x = clamp((node.velocity.x+forces[index].x*deltaTime)*velocityDamping, -maxVelocity, maxVelocity)
-		node.velocity.y = clamp((node.velocity.y+forces[index].y*deltaTime)*velocityDamping, -maxVelocity, maxVelocity)
-		movement := point{x: node.velocity.x * deltaTime, y: node.velocity.y * deltaTime}
-		node.position = m.clamp(point{x: node.position.x + movement.x, y: node.position.y + movement.y})
-		maximumMotion = max(maximumMotion, distance(point{}, movement))
-	}
-	m.pinRoot()
-	return maximumMotion
-}
-
 func (m *Model) stepAnchored() {
-	forces := m.forces(false)
+	forces := m.forces()
 	const deltaTime = 1.0 / framesPerSecond
 	for index := range m.nodes {
 		if index == m.root || index == m.dragging {
@@ -264,7 +221,7 @@ func (m *Model) stepAnchored() {
 	m.pinRoot()
 }
 
-func (m *Model) forces(layout bool) []point {
+func (m *Model) forces() []point {
 	if cap(m.forceBuffer) < len(m.nodes) {
 		m.forceBuffer = make([]point, len(m.nodes))
 	} else {
@@ -272,10 +229,6 @@ func (m *Model) forces(layout bool) []point {
 		clear(m.forceBuffer)
 	}
 	forces := m.forceBuffer
-	edgeStrength := returnEdgeStrength
-	if layout {
-		edgeStrength = layoutEdgeStrength
-	}
 	for _, edge := range m.edges {
 		if edge.from == edge.to {
 			continue
@@ -288,18 +241,12 @@ func (m *Model) forces(layout bool) []point {
 			delta = point{x: 1, y: 0}
 			length = 1
 		}
-		force := edgeStrength * (length - edge.rest)
+		force := returnEdgeStrength * (length - edge.rest)
 		m.addPairForce(forces, edge.from, edge.to, point{x: force * delta.x / length, y: force * delta.y / length})
-	}
-	if layout {
-		for index, node := range m.nodes {
-			forces[index].x += seedStrength * (node.seed.x - node.position.x)
-			forces[index].y += seedStrength * (node.seed.y - node.position.y)
-		}
 	}
 	for first := range m.nodes {
 		for second := first + 1; second < len(m.nodes); second++ {
-			m.addCollisionForces(forces, first, second, layout)
+			m.addCollisionForces(forces, first, second)
 		}
 	}
 	return forces
@@ -312,22 +259,15 @@ func (m *Model) addPairForce(forces []point, first, second int, force point) {
 	forces[second].y -= force.y
 }
 
-func (m *Model) addCollisionForces(forces []point, first, second int, repel bool) {
+func (m *Model) addCollisionForces(forces []point, first, second int) {
 	firstCenter := m.nodes[first].position
 	secondCenter := m.nodes[second].position
 	delta := point{x: secondCenter.x - firstCenter.x, y: secondCenter.y - firstCenter.y}
-	length := distance(firstCenter, secondCenter)
-	if length == 0 {
+	if delta == (point{}) {
 		delta = point{x: 1, y: 0.5}
-		length = distance(point{}, delta)
 	}
-	if repel && length < repulsionDistance {
-		strength := repulsionStrength * (1 - length/repulsionDistance)
-		m.addPairForce(forces, first, second, point{x: -strength * delta.x / length, y: -strength * delta.y / length})
-	}
-
-	overlapX := 2*nodeHalfWidth - math.Abs(delta.x)
-	overlapY := 2*nodeHalfHeight - math.Abs(delta.y)
+	overlapX := nodeHalfWidth*(m.nodes[first].scale+m.nodes[second].scale) - math.Abs(delta.x)
+	overlapY := nodeHalfHeight*(m.nodes[first].scale+m.nodes[second].scale) - math.Abs(delta.y)
 	if overlapX <= 0 || overlapY <= 0 {
 		return
 	}
@@ -376,7 +316,9 @@ func (m *Model) beginDrag(x, y int) bool {
 		position := screenPoint(node.position)
 		nodeX := int(math.Round(position.x))
 		nodeY := int(math.Round(position.y))
-		if y >= nodeY-1 && y <= nodeY+1 && x >= nodeX-1 && x <= nodeX+1 {
+		radiusX := max(1, int(math.Ceil(m.nodeRadius*node.scale/float64(m.cellWidth))))
+		radiusY := max(1, int(math.Ceil(m.nodeRadius*node.scale/float64(m.cellHeight))))
+		if y >= nodeY-radiusY && y <= nodeY+radiusY && x >= nodeX-radiusX && x <= nodeX+radiusX {
 			m.dragging = index
 			m.dragOffset = point{x: float64(x) - position.x, y: float64(y) - position.y}
 			node.velocity = point{}

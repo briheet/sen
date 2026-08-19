@@ -61,9 +61,14 @@ func (m *Model) upload() tea.Cmd {
 		imageID = m.imageIDs[1]
 	}
 	done := make(chan renderResult, 1)
-	nodes := snapshotNodes(m.nodes)
+	// Keep the committed label position on the node; renderer buffers are pooled.
+	for index := range m.nodes {
+		m.nodes[index].rendered = m.nodes[index].position
+	}
+	buffer := snapshotNodes(m.nodes)
 	m.renderer.submit(renderRequest{
-		nodes:           nodes,
+		nodes:           buffer.nodes,
+		buffer:          buffer,
 		sequence:        m.renderSequence,
 		imageID:         imageID,
 		previousImageID: m.frontImageID,

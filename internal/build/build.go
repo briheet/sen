@@ -89,11 +89,6 @@ func serviceLogFields(service config.Service) []zap.Field {
 	return fields
 }
 
-// LogDir returns the directory reserved for this run's logs.
-func (g *Group) LogDir() string {
-	return g.logs.Dir()
-}
-
 // LogPath returns the engine log path.
 func (g *Group) LogPath() string {
 	return g.logs.Path()

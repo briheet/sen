@@ -22,6 +22,7 @@ const maxPooledRenderNodes = 4096
 
 type renderRequest struct {
 	nodes                   []node
+	buffer                  *renderNodeBuffer
 	sequence                uint64
 	imageID                 uint32
 	previousImageID         uint32
@@ -43,7 +44,7 @@ type renderResult struct {
 type frameOutput struct {
 	output   string
 	owner    string
-	nodes    []node
+	buffer   *renderNodeBuffer
 	sequence uint64
 	imageID  uint32
 }
@@ -81,7 +82,9 @@ type renderer struct {
 
 type encoderBufferPool struct{ buffer *png.EncoderBuffer }
 
-var renderNodes sync.Pool
+type renderNodeBuffer struct{ nodes []node }
+
+var renderNodes = sync.Pool{New: func() any { return new(renderNodeBuffer) }}
 
 func (p *encoderBufferPool) Get() *png.EncoderBuffer {
 	buffer := p.buffer
@@ -111,7 +114,7 @@ func (r *renderer) submit(request renderRequest) {
 	default:
 		select {
 		case stale := <-r.requests:
-			releaseRenderNodes(stale.nodes)
+			releaseRenderNodes(stale.buffer)
 			stale.done <- renderResult{dropped: true}
 		default:
 		}
@@ -132,7 +135,7 @@ func (r *renderer) run() {
 			result = renderResult{dropped: true}
 		} else if err == nil {
 			result.frame = frameOutput{
-				output: r.output.String(), owner: r.owner, nodes: request.nodes,
+				output: r.output.String(), owner: r.owner, buffer: request.buffer,
 				sequence: request.sequence, imageID: request.imageID,
 			}
 			r.trace("frame ready image_id=%d previous_id=%d bytes=%d origin=%d,%d size=%dx%d",
@@ -141,28 +144,29 @@ func (r *renderer) run() {
 		}
 		request.done <- result
 		if result.dropped || result.err != nil {
-			releaseRenderNodes(request.nodes)
+			releaseRenderNodes(request.buffer)
 		}
 	}
 }
 
-func snapshotNodes(source []node) []node {
-	nodes, _ := renderNodes.Get().([]node)
-	if cap(nodes) < len(source) {
-		nodes = make([]node, len(source))
+func snapshotNodes(source []node) *renderNodeBuffer {
+	buffer := renderNodes.Get().(*renderNodeBuffer)
+	if cap(buffer.nodes) < len(source) {
+		buffer.nodes = make([]node, len(source))
 	} else {
-		nodes = nodes[:len(source)]
+		buffer.nodes = buffer.nodes[:len(source)]
 	}
-	copy(nodes, source)
-	return nodes
+	copy(buffer.nodes, source)
+	return buffer
 }
 
-func releaseRenderNodes(nodes []node) {
-	if cap(nodes) > maxPooledRenderNodes {
+func releaseRenderNodes(buffer *renderNodeBuffer) {
+	if buffer == nil || cap(buffer.nodes) > maxPooledRenderNodes {
 		return
 	}
-	clear(nodes)
-	renderNodes.Put(nodes[:0])
+	clear(buffer.nodes)
+	buffer.nodes = buffer.nodes[:0]
+	renderNodes.Put(buffer)
 }
 
 func (r *renderer) render(request renderRequest) error {

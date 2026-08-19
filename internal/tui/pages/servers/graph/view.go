@@ -52,6 +52,9 @@ func (m Model) View() string {
 		return ""
 	}
 	if len(m.nodes) == 0 {
+		if m.kind == FileGraph {
+			return centeredMessage(m.width, m.height, "No project files found.")
+		}
 		return centeredMessage(m.width, m.height, "No project functions found.")
 	}
 	if !m.graphics {
@@ -65,21 +68,25 @@ func (m Model) View() string {
 
 // refreshLabels rebuilds terminal text only after a label crosses a cell.
 func (m *Model) refreshLabels(force bool) {
-	m.refreshLabelsFrom(m.nodes, force)
+	m.refreshLabelPositions(force, false)
 }
 
-func (m *Model) refreshLabelsFrom(source []node, force bool) {
+func (m *Model) refreshRenderedLabels(force bool) {
+	m.refreshLabelPositions(force, true)
+}
+
+func (m *Model) refreshLabelPositions(force, rendered bool) {
 	redraw := force
 	for index := range m.nodes {
 		node := &m.nodes[index]
-		positioned := *node
-		if index < len(source) {
-			positioned.position = source[index].position
+		position := node.position
+		if rendered {
+			position = node.rendered
 		}
-		position := screenPoint(positioned.position)
+		position = screenPoint(position)
 		cellX := stableLabelCell(position.x, node.labelCellX, force)
 		cellY := stableLabelCell(position.y, node.labelCellY, force)
-		x, y := m.labelPosition(positioned.label, cellX, cellY)
+		x, y := m.labelPosition(node.label, cellX, cellY)
 		if x != node.labelX || y != node.labelY || cellX != node.labelCellX || cellY != node.labelCellY {
 			node.labelX, node.labelY = x, y
 			node.labelCellX, node.labelCellY = cellX, cellY
@@ -174,12 +181,12 @@ func (r *renderer) renderImage(request renderRequest) *image.Paletted {
 	}
 
 	// Glows sit below links so translucent pixels cannot erase connections.
-	r.drawNodes(request, false, request.nodeRadius+2, 0.15)
-	r.drawNodes(request, true, request.nodeRadius+2, 0.2)
+	r.drawNodes(request, false, 2, 0.15)
+	r.drawNodes(request, true, 2, 0.2)
 	r.drawEdges(request, false)
 	r.drawEdges(request, true)
-	r.drawNodes(request, false, request.nodeRadius, 1)
-	r.drawNodes(request, true, request.nodeRadius, 1)
+	r.drawNodes(request, false, 0, 1)
+	r.drawNodes(request, true, 0, 1)
 	return r.canvas
 }
 
@@ -208,7 +215,7 @@ func (r *renderer) drawEdges(request renderRequest, hot bool) {
 	r.paintMask(indexes, 1)
 }
 
-func (r *renderer) drawNodes(request renderRequest, hotOnly bool, radius, opacity float64) {
+func (r *renderer) drawNodes(request renderRequest, hotOnly bool, radiusOffset, opacity float64) {
 	drawn := false
 	for index, node := range request.nodes {
 		if (index == request.dragging) != hotOnly {
@@ -218,6 +225,7 @@ func (r *renderer) drawNodes(request renderRequest, hotOnly bool, radius, opacit
 			r.resetMask()
 			drawn = true
 		}
+		radius := request.nodeRadius*node.scale + radiusOffset
 		addCircle(&r.rasterizer, pixelPoint(node.position, request.cellWidth, request.cellHeight), radius)
 	}
 	if !drawn {
