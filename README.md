@@ -1,4 +1,4 @@
-![Senbon Ascii](./assets/senbon_ascii.png)
+# Sen
 
 Inspired by SenbonZakura, sen analyzes applications as collections of processes and supporting
 services. It combines source analysis with live runtime and service telemetry
