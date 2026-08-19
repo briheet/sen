@@ -1,4 +1,4 @@
-// Package cpuprofile decodes V8 CPU profiles into Senbon's model.
+// Package cpuprofile decodes V8 CPU profiles into sen's model.
 package cpuprofile
 
 import (
@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/model"
 )
 
 const (

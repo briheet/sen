@@ -11,12 +11,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/briheet/senbon/internal/adapters"
-	runtimemetrics "github.com/briheet/senbon/internal/adapters/golang/runtime/metrics"
-	runtimepprof "github.com/briheet/senbon/internal/adapters/golang/runtime/pprof"
-	runtimeprocess "github.com/briheet/senbon/internal/adapters/golang/runtime/process"
-	runtimetrace "github.com/briheet/senbon/internal/adapters/golang/runtime/trace"
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/adapters"
+	runtimemetrics "github.com/briheet/sen/internal/adapters/golang/runtime/metrics"
+	runtimepprof "github.com/briheet/sen/internal/adapters/golang/runtime/pprof"
+	runtimeprocess "github.com/briheet/sen/internal/adapters/golang/runtime/process"
+	runtimetrace "github.com/briheet/sen/internal/adapters/golang/runtime/trace"
+	"github.com/briheet/sen/internal/adapters/processstats"
+	"github.com/briheet/sen/internal/model"
 )
 
 // Runtime owns a target process and its collected runtime data.
@@ -26,24 +27,25 @@ type Runtime struct {
 	Profiles map[string]*runtimepprof.Profile
 	Trace    *runtimetrace.Trace
 
-	client *http.Client
+	client  *http.Client
+	sampler *processstats.Sampler
 }
 
 var _ adapters.Runtime = (*Runtime)(nil)
 
 const (
-	metricsPath   = "/debug/senbon/metrics"
+	metricsPath   = "/debug/sen/metrics"
 	pprofPath     = "/debug/pprof/"
 	tracePath     = "/debug/pprof/trace"
-	collectorURL  = "http://senbon"
+	collectorURL  = "http://sen"
 	cpuProfile    = "cpu"
 	collectRetry  = 10 * time.Millisecond
 	collectWindow = time.Second
 )
 
 // NewRuntime builds the target process.
-func NewRuntime(ctx context.Context, sourceDir string) (*Runtime, error) {
-	process, err := runtimeprocess.NewProcess(ctx, sourceDir)
+func NewRuntime(ctx context.Context, sourceDir string, buildArgs, runArgs []string, output adapters.Output) (*Runtime, error) {
+	process, err := runtimeprocess.NewProcess(ctx, sourceDir, buildArgs, runArgs, output)
 	if err != nil {
 		return nil, err
 	}
@@ -59,8 +61,17 @@ func NewRuntime(ctx context.Context, sourceDir string) (*Runtime, error) {
 }
 
 // Start launches the instrumented target.
-func (r *Runtime) Start(context.Context) error {
-	return r.Process.Start()
+func (r *Runtime) Start(ctx context.Context) error {
+	if err := r.Process.Start(); err != nil {
+		return err
+	}
+	sampler, err := processstats.New(ctx, r.Process.PID())
+	if err != nil {
+		_ = r.Process.Stop()
+		return err
+	}
+	r.sampler = sampler
+	return nil
 }
 
 // Collect captures one complete runtime snapshot.
@@ -78,16 +89,14 @@ func (r *Runtime) Collect(ctx context.Context) (model.Observation, error) {
 		}
 	}
 
-	results := make(chan error, 2)
-	go func() { results <- r.CollectProfile(ctx, cpuProfile, collectWindow) }()
-	go func() { results <- r.CollectTrace(ctx, collectWindow) }()
-	for range 2 {
-		if err := <-results; err != nil {
-			return model.Observation{}, err
-		}
+	if err := r.CollectTrace(ctx, collectWindow); err != nil {
+		return model.Observation{}, err
 	}
 	if err := r.CollectMetrics(ctx); err != nil {
 		return model.Observation{}, err
+	}
+	if r.sampler != nil {
+		r.Metrics.Process = r.sampler.Collect(ctx)
 	}
 	return model.Observation{Metrics: r.Metrics, Profiles: r.Profiles, Trace: r.Trace}, nil
 }

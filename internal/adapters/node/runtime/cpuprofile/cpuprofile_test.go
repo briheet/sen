@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/model"
 	"github.com/stretchr/testify/require"
 )
 

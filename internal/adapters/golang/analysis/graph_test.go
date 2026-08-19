@@ -42,10 +42,13 @@ type reflected struct{}
 func (worker) Run(value int) int { return helper(value) }
 func (reflected) Reflected() {}
 func dead() {}
+func callback() {}
+func use(callback func()) { callback() }
 
 func main() {
 	helper(1)
 	helper(2)
+	use(callback)
 	var r runner = worker{}
 	r.Run(3)
 	reflect.ValueOf(reflected{}).MethodByName("Reflected").Call(nil)
@@ -67,7 +70,7 @@ func helper(value int) int {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o600))
 	}
 
-	pkgs, err := packages.Load(&packages.Config{Mode: packages.LoadAllSyntax, Dir: dir}, ".")
+	pkgs, err := packages.Load(&packages.Config{Mode: packages.LoadSyntax, Dir: dir}, ".")
 	require.NoError(t, err)
 	require.Len(t, pkgs, 1)
 	require.Empty(t, pkgs[0].Errors)
@@ -81,32 +84,37 @@ func helper(value int) int {
 	var runNode *Node
 	var reflectedNode *Node
 	var deadNode *Node
+	var externalNode *Node
 	for _, node := range parsed.Nodes {
-		byName[node.Name] = node
-		if node.Name == "Run" && node.Signature.Receiver == "graphfixture.worker" {
+		pkg := parsed.Packages[node.Pkg]
+		if node.Syntax.File != 0 {
+			byName[node.Name] = node
+		}
+		if node.Name == "Run" && node.Syntax.File != 0 {
 			runNode = node
 		}
-		if node.Name == "Reflected" && node.Signature.Receiver == "graphfixture.reflected" {
+		if node.Name == "Reflected" && node.Syntax.File != 0 {
 			reflectedNode = node
 		}
-		if node.Name == "dead" && node.Info.Package == "graphfixture" {
+		if node.Name == "dead" && node.Syntax.File != 0 {
 			deadNode = node
+		}
+		if pkg != nil && pkg.Path == "reflect" {
+			externalNode = node
 		}
 	}
 	mainNode := byName["main"]
 	helperNode := byName["helper"]
+	callbackNode := byName["callback"]
 	require.NotNil(t, mainNode)
 	require.NotNil(t, helperNode)
+	require.NotNil(t, callbackNode)
 	require.NotNil(t, runNode)
 	require.NotNil(t, reflectedNode)
-	require.Nil(t, deadNode)
+	require.NotNil(t, deadNode)
+	require.NotNil(t, externalNode)
 	require.Equal(t, mainNode.ID, parsed.Root)
-	require.Equal(t, "graphfixture.worker", runNode.Signature.Receiver)
-	require.Equal(t, "int", runNode.Signature.Params[0].Type)
-	require.NotEmpty(t, helperNode.Function.Blocks)
-	require.NotEmpty(t, helperNode.Function.Blocks[0].Instructions)
 	require.Positive(t, helperNode.Syntax.Start.Line)
-	require.NotEmpty(t, helperNode.GoVersion)
 
 	helperCalls := 0
 	for _, id := range mainNode.Out {
@@ -122,6 +130,9 @@ func helper(value int) int {
 	require.NotNil(t, closure.Parent)
 	require.Equal(t, mainNode.ID, *closure.Parent)
 	require.Equal(t, SyntaxFuncLit, closure.Syntax.Kind)
+	require.Contains(t, mainNode.Function.References, callbackNode.ID)
+	require.NotContains(t, mainNode.Out, runNode.ID)
+	require.NotContains(t, mainNode.Out, reflectedNode.ID)
 
 	var mainFile, helperFile *File
 	for _, file := range parsed.Files {
@@ -137,12 +148,4 @@ func helper(value int) int {
 	require.Contains(t, mainFile.Calls, helperFile.ID)
 	require.Contains(t, helperFile.CalledBy, mainFile.ID)
 
-	methodFound := false
-	for _, methodSet := range parsed.Program.MethodSets {
-		if methodSet.Type == "graphfixture.worker" {
-			require.Contains(t, methodSet.Methods, runNode.ID)
-			methodFound = true
-		}
-	}
-	require.True(t, methodFound)
 }

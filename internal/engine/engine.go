@@ -1,42 +1,49 @@
-// Package engine joins a target adapter with Senbon's normalized model.
+// Package engine joins a target adapter with sen's normalized model.
 package engine
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/briheet/senbon/internal/adapters"
-	"github.com/briheet/senbon/internal/adapters/factory"
-	"github.com/briheet/senbon/internal/helpers"
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/adapters"
+	"github.com/briheet/sen/internal/adapters/factory"
+	"github.com/briheet/sen/internal/config"
+	"github.com/briheet/sen/internal/helpers"
+	"github.com/briheet/sen/internal/model"
 )
 
 const collectionTimeout = time.Minute
 
-// Engine owns a target runtime and the graph exposed to the TUI.
+// Engine owns one configured service, its runtime, and its graph.
 type Engine struct {
+	Service config.Service
 	Runtime adapters.Runtime
 	Graph   *model.RuntimeGraph
+
+	mu       sync.RWMutex
+	revision atomic.Uint64
 }
 
-// NewEngine resolves, analyzes, and opens a target application.
-func NewEngine(ctx context.Context, sourcePath, language string) (*Engine, error) {
-	if err := helpers.ValidateSourcePath(sourcePath); err != nil {
+// NewEngine resolves, analyzes, and opens a configured service.
+func NewEngine(ctx context.Context, service config.Service, output adapters.Output) (*Engine, error) {
+	if err := helpers.ValidateSourcePath(service.Path); err != nil {
 		return nil, err
 	}
-	application, err := factory.Application(language)
+	application, err := factory.Application(string(service.Lang))
 	if err != nil {
 		return nil, err
 	}
-	static, namespace, err := application.Analyze(ctx, sourcePath)
+	static, namespace, err := application.Analyze(ctx, service.Path, service.BuildArgs)
 	if err != nil {
 		return nil, err
 	}
-	target, err := application.Open(ctx, sourcePath)
+	target, err := application.Open(ctx, service.Path, service.BuildArgs, service.RunArgs, output)
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{Runtime: target, Graph: model.BuildRuntimeGraph(namespace, static)}, nil
+	return &Engine{Service: service, Runtime: target, Graph: model.BuildRuntimeGraph(namespace, static)}, nil
 }
 
 // Start launches the target application.
@@ -50,8 +57,22 @@ func (e *Engine) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.Graph.ApplyUpdate(e.Graph.BuildUpdate(observation.Metrics, observation.Profiles, observation.Trace))
+	update := e.Graph.BuildUpdate(observation.Metrics, observation.Profiles, observation.Trace)
+	e.mu.Lock()
+	e.Graph.ApplyUpdate(update)
+	e.mu.Unlock()
+	e.revision.Add(1)
 	return nil
+}
+
+// Revision changes after each complete metrics, profile, and trace window.
+func (e *Engine) Revision() uint64 { return e.revision.Load() }
+
+// Snapshot returns the latest completed runtime window.
+func (e *Engine) Snapshot() model.RuntimeSnapshot {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.Graph.Snapshot()
 }
 
 // Wait blocks until the target exits.
@@ -69,9 +90,9 @@ func (e *Engine) Cleanup() error {
 	return e.Runtime.Cleanup()
 }
 
-// Run starts the target, collects one snapshot, and waits for exit.
+// Run continuously collects runtime windows until the target exits.
 func (e *Engine) Run() error {
-	ctx, cancel := context.WithTimeout(context.Background(), collectionTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := e.Start(ctx); err != nil {
 		return err
@@ -79,18 +100,31 @@ func (e *Engine) Run() error {
 
 	done := make(chan error, 1)
 	go func() { done <- e.Wait() }()
-	collected := make(chan error, 1)
-	go func() { collected <- e.Refresh(ctx) }()
+	for {
+		collected := make(chan error, 1)
+		go func() {
+			window, stop := context.WithTimeout(ctx, collectionTimeout)
+			defer stop()
+			collected <- e.Refresh(window)
+		}()
 
-	select {
-	case err := <-done:
-		return err
-	case err := <-collected:
-		if err != nil {
+		select {
+		case err := <-done:
+			cancel()
+			<-collected
+			return err
+		case err := <-collected:
+			if err == nil {
+				continue
+			}
+			select {
+			case exitErr := <-done:
+				return exitErr
+			default:
+			}
 			_ = e.Stop()
 			<-done
 			return err
 		}
-		return <-done
 	}
 }

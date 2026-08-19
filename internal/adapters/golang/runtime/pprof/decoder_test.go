@@ -21,7 +21,7 @@ func TestReadRuntimeProfile(t *testing.T) {
 	var found bool
 	for _, location := range result.Locations {
 		for _, frame := range location.Frames {
-			found = found || frame.Function == "github.com/briheet/senbon/internal/adapters/golang/runtime/pprof.TestReadRuntimeProfile"
+			found = found || frame.Function == "github.com/briheet/sen/internal/adapters/golang/runtime/pprof.TestReadRuntimeProfile"
 		}
 	}
 	require.True(t, found)

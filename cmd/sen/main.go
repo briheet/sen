@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/briheet/senbon/internal/cmd"
+	"github.com/briheet/sen/internal/cmd"
 )
 
 func main() {

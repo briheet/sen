@@ -3,9 +3,16 @@ package adapters
 
 import (
 	"context"
+	"io"
 
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/model"
 )
+
+// Output receives target process output without writing to the terminal.
+type Output struct {
+	Stdout io.Writer
+	Stderr io.Writer
+}
 
 const (
 	// GoTarget identifies the Go adapter.
@@ -16,13 +23,13 @@ const (
 
 // Analyzer builds a normalized static graph and returns its source namespace.
 type Analyzer interface {
-	Analyze(context.Context, string) (*model.StaticGraph, string, error)
+	Analyze(ctx context.Context, sourcePath string, buildArgs []string) (*model.StaticGraph, string, error)
 }
 
 // Application provides analysis and runtime support for one target language.
 type Application interface {
 	Analyzer
-	Open(context.Context, string) (Runtime, error)
+	Open(ctx context.Context, sourcePath string, buildArgs, runArgs []string, output Output) (Runtime, error)
 }
 
 // Runtime collects normalized data from a target process.

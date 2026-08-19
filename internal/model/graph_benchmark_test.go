@@ -37,9 +37,11 @@ func BenchmarkRuntimeGraphUpdates(b *testing.B) {
 		},
 	}
 	metrics := &RuntimeMetrics{
-		UserCPU:          1,
-		SchedulerLatency: &Histogram{Counts: []uint64{1}, Buckets: []float64{0, 1}},
-		GCPauses:         &Histogram{Counts: []uint64{1}, Buckets: []float64{0, 1}},
+		Go: GoMetrics{
+			UserCPU:          1,
+			SchedulerLatency: &Histogram{Counts: []uint64{1}, Buckets: []float64{0, 1}},
+			GCPauses:         &Histogram{Counts: []uint64{1}, Buckets: []float64{0, 1}},
+		},
 	}
 	profiles := map[string]*Profile{"cpu": profile}
 	result := BuildRuntimeGraph("example.com/app", static)

@@ -1,393 +1,369 @@
 package analysis
 
 import (
+	"errors"
 	"go/ast"
 	"go/token"
 	"go/types"
 	"slices"
-	"sort"
+	"strconv"
+	"strings"
 
-	"github.com/briheet/senbon/internal/model"
-	"golang.org/x/tools/go/callgraph"
-	"golang.org/x/tools/go/callgraph/rta"
+	"github.com/briheet/sen/internal/model"
 	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
 )
 
 type (
-	Graph        = model.StaticGraph
-	Node         = model.StaticNode
-	File         = model.StaticFile
-	PackageID    = model.PackageID
-	NodeID       = model.NodeID
-	FileID       = model.FileID
-	BlockID      = model.BlockID
-	SyntaxKind   = model.SyntaxKind
-	Position     = model.Position
-	ObjectFunc   = model.ObjectFunc
-	Signature    = model.Signature
-	Param        = model.Param
-	Package      = model.Package
-	TypeInfo     = model.TypeInfo
-	Selection    = model.Selection
-	FunctionBody = model.FunctionBody
-	Variable     = model.Variable
-	TypeParam    = model.TypeParam
-	Type         = model.Type
-	Block        = model.Block
-	Instruction  = model.Instruction
-	Syntax       = model.Syntax
-	Program      = model.Program
-	MethodSet    = model.MethodSet
+	Graph     = model.StaticGraph
+	Node      = model.StaticNode
+	File      = model.StaticFile
+	PackageID = model.PackageID
+	NodeID    = model.NodeID
+	FileID    = model.FileID
 )
 
 const (
 	SyntaxFuncDecl = model.SyntaxFuncDecl
 	SyntaxFuncLit  = model.SyntaxFuncLit
-	SyntaxRange    = model.SyntaxRange
 )
 
-func GetGraph(pkgs []*packages.Package) (*Graph, error) {
-	// build ssa package and get main
-	mainFunc, err := BuildPackagesAndReturnMain(pkgs)
-	if err != nil {
-		return nil, err
-	}
+var (
+	ErrNoMainPackage  = errors.New("no main package found")
+	ErrNoMainFunction = errors.New("no main function was found")
+	ErrInvalidPackage = errors.New("cannot analyze an invalid package")
+)
 
-	// Get rta result. No reflection
-	// TODO: Get back to here
-	result := BuildCallgraph(mainFunc)
-
-	// Build graph
-	graph := buildGraph(result)
-	return graph, nil
+type sourceFunction struct {
+	pkg    *packages.Package
+	body   *ast.BlockStmt
+	object *types.Func
+	parent *sourceFunction
+	node   *Node
+	file   FileID
+	pos    token.Pos
+	end    token.Pos
+	kind   model.SyntaxKind
+	name   string
 }
 
-// Take in result and build graph
-func buildGraph(result *rta.Result) *Graph {
-	graph := &Graph{
-		Nodes:    make(map[NodeID]*Node),
-		Files:    make(map[FileID]*File),
-		Packages: make(map[PackageID]*Package),
+// GetGraph builds the source graph for project packages. Runtime traces add
+// relationships that static type information cannot resolve.
+func GetGraph(pkgs []*packages.Package) (*Graph, error) {
+	if len(pkgs) == 0 || pkgs[0] == nil || pkgs[0].Types == nil {
+		return nil, ErrInvalidPackage
+	}
+	if pkgs[0].Name != "main" {
+		return nil, ErrNoMainPackage
 	}
 
-	reachable := make([]*ssa.Function, 0, len(result.Reachable))
-	for fn := range result.Reachable {
-		reachable = append(reachable, fn)
+	builder := graphBuilder{
+		graph: &Graph{
+			Nodes:    make(map[NodeID]*Node),
+			Files:    make(map[FileID]*File),
+			Packages: make(map[PackageID]*model.Package),
+		},
+		packageIDs:  make(map[*types.Package]PackageID),
+		objectIDs:   make(map[*types.Func]NodeID),
+		literalIDs:  make(map[*ast.FuncLit]NodeID),
+		rootPackage: pkgs[0].PkgPath,
 	}
-	sort.Slice(reachable, func(i, j int) bool {
-		left := reachable[i].Prog.Fset.Position(reachable[i].Pos())
-		right := reachable[j].Prog.Fset.Position(reachable[j].Pos())
-		if left.Filename != right.Filename {
-			return left.Filename < right.Filename
-		}
-		if left.Offset != right.Offset {
-			return left.Offset < right.Offset
-		}
-		return reachable[i].String() < reachable[j].String()
+	if err := builder.collect(pkgs); err != nil {
+		return nil, err
+	}
+	builder.connect()
+	if builder.graph.Root == 0 {
+		return nil, ErrNoMainFunction
+	}
+	return builder.graph, nil
+}
+
+type graphBuilder struct {
+	graph       *Graph
+	functions   []*sourceFunction
+	packageIDs  map[*types.Package]PackageID
+	objectIDs   map[*types.Func]NodeID
+	literalIDs  map[*ast.FuncLit]NodeID
+	rootPackage string
+	nextPackage PackageID
+	nextNode    NodeID
+}
+
+func (b *graphBuilder) collect(pkgs []*packages.Package) error {
+	b.nextPackage = 1
+	b.nextNode = 1
+	ordered := append([]*packages.Package(nil), pkgs...)
+	slices.SortFunc(ordered, func(left, right *packages.Package) int {
+		return strings.Compare(left.PkgPath, right.PkgPath)
 	})
-	for _, fn := range reachable {
-		result.CallGraph.CreateNode(fn)
+	for _, pkg := range ordered {
+		if pkg == nil || pkg.Types == nil || pkg.TypesInfo == nil || pkg.Fset == nil {
+			return ErrInvalidPackage
+		}
+		b.packageID(pkg.Types)
 	}
 
-	nodes := make([]*callgraph.Node, 0, len(result.CallGraph.Nodes))
-	for _, node := range result.CallGraph.Nodes {
-		if node.Func != nil {
-			nodes = append(nodes, node)
-		}
+	type sourceFile struct {
+		pkg  *packages.Package
+		path string
+		ast  *ast.File
 	}
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-
-	if result.CallGraph.Root != nil {
-		graph.Root = NodeID(result.CallGraph.Root.ID)
-	}
-
-	qualifier := func(pkg *types.Package) string {
-		if pkg == nil {
-			return ""
-		}
-		return pkg.Path()
-	}
-	typeString := func(typ types.Type) string {
-		if typ == nil {
-			return ""
-		}
-		return types.TypeString(typ, qualifier)
-	}
-	position := func(fset *token.FileSet, pos token.Pos) Position {
-		if pos == token.NoPos {
-			return Position{}
-		}
-		p := fset.Position(pos)
-		return Position{Line: p.Line, Column: p.Column, Offset: p.Offset}
-	}
-
-	packageIDs := make(map[*types.Package]PackageID)
-	fileIDs := make(map[string]FileID)
-	nextPackageID := PackageID(1)
-	nextFileID := FileID(1)
-	packageID := func(pkg *types.Package) PackageID {
-		if pkg == nil {
-			return 0
-		}
-		if id, ok := packageIDs[pkg]; ok {
-			return id
-		}
-		id := nextPackageID
-		nextPackageID++
-		packageIDs[pkg] = id
-		graph.Packages[id] = &Package{Path: pkg.Path(), Name: pkg.Name()}
-		graph.Program.Packages = append(graph.Program.Packages, id)
-		return id
-	}
-	fileID := func(path string, pkgID PackageID) FileID {
-		if path == "" {
-			return 0
-		}
-		if id, ok := fileIDs[path]; ok {
-			return id
-		}
-		id := nextFileID
-		nextFileID++
-		fileIDs[path] = id
-		graph.Files[id] = &File{ID: id, Path: path, Package: pkgID}
-		graph.Program.Files = append(graph.Program.Files, id)
-		return id
-	}
-	functionPackage := func(fn *ssa.Function) *types.Package {
-		if fn.Pkg != nil {
-			return fn.Pkg.Pkg
-		}
-		if object := fn.Object(); object != nil {
-			return object.Pkg()
-		}
-		if origin := fn.Origin(); origin != nil && origin.Pkg != nil {
-			return origin.Pkg.Pkg
-		}
-		return nil
-	}
-
-	functionIDs := make(map[*ssa.Function]NodeID, len(nodes))
-	functionFiles := make(map[*ssa.Function]FileID, len(nodes))
-	for _, callNode := range nodes {
-		fn := callNode.Func
-		id := NodeID(callNode.ID)
-		functionIDs[fn] = id
-
-		pkg := functionPackage(fn)
-		pkgID := packageID(pkg)
-		node := &Node{
-			Name:      fn.Name(),
-			ID:        id,
-			Synthetic: fn.Synthetic,
-			Pkg:       pkgID,
-			Info: TypeInfo{
-				Type: typeString(fn.Type()),
-			},
-		}
-		if pkg != nil {
-			node.GoVersion = pkg.GoVersion()
-			node.Info.Package = pkg.Path()
-		}
-		if object, ok := fn.Object().(*types.Func); ok {
-			node.Info.Object = types.ObjectString(object, qualifier)
-			node.Object = &ObjectFunc{Name: object.FullName(), Pkg: packageID(object.Pkg())}
-			if origin := object.Origin(); origin != object {
-				node.Object.Origin = &ObjectFunc{Name: origin.FullName(), Pkg: packageID(origin.Pkg())}
-			}
-		}
-
-		sig := fn.Signature
-		if recv := sig.Recv(); recv != nil {
-			node.Signature.Receiver = typeString(recv.Type())
-		}
-		for i := range sig.Params().Len() {
-			param := sig.Params().At(i)
-			node.Signature.Params = append(node.Signature.Params, Param{Name: param.Name(), Type: typeString(param.Type())})
-		}
-		for i := range sig.Results().Len() {
-			result := sig.Results().At(i)
-			node.Signature.Results = append(node.Signature.Results, Param{Name: result.Name(), Type: typeString(result.Type())})
-		}
-		node.Signature.Variadic = sig.Variadic()
-		for i := range sig.TypeParams().Len() {
-			node.Signature.TypeParams = append(node.Signature.TypeParams, sig.TypeParams().At(i).Obj().Name())
-		}
-
-		for _, freeVar := range fn.FreeVars {
-			node.Function.FreeVars = append(node.Function.FreeVars, Variable{Name: freeVar.Name(), Type: typeString(freeVar.Type())})
-		}
-		for _, local := range fn.Locals {
-			localType := local.Type()
-			if pointer, ok := localType.(*types.Pointer); ok {
-				localType = pointer.Elem()
-			}
-			name := local.Comment
-			if name == "" {
-				name = local.Name()
-			}
-			node.Function.Locals = append(node.Function.Locals, Variable{Name: name, Type: typeString(localType)})
-		}
-		for _, block := range fn.Blocks {
-			parsed := Block{ID: BlockID(block.Index), Index: block.Index, Comment: block.Comment}
-			for _, instruction := range block.Instrs {
-				parsed.Instructions = append(parsed.Instructions, Instruction{
-					Op:       instruction.String(),
-					Position: position(fn.Prog.Fset, instruction.Pos()),
-				})
-			}
-			for _, pred := range block.Preds {
-				parsed.Pred = append(parsed.Pred, BlockID(pred.Index))
-			}
-			for _, succ := range block.Succs {
-				parsed.Succ = append(parsed.Succ, BlockID(succ.Index))
-			}
-			node.Function.Blocks = append(node.Function.Blocks, parsed)
-		}
-		if fn.Recover != nil {
-			recoverID := BlockID(fn.Recover.Index)
-			node.Function.Recover = &recoverID
-		}
-		for i := range sig.RecvTypeParams().Len() {
-			param := sig.RecvTypeParams().At(i)
-			node.Function.RecvTypeParams = append(node.Function.RecvTypeParams, TypeParam{
-				Name:       param.Obj().Name(),
-				Constraint: typeString(param.Constraint()),
-			})
-		}
-		typeArgs := fn.TypeArgs()
-		recvArgs := sig.RecvTypeParams().Len()
-		if recvArgs > len(typeArgs) {
-			recvArgs = len(typeArgs)
-		}
-		for i, arg := range typeArgs {
-			parsed := Type{Name: typeString(arg)}
-			if i < recvArgs {
-				node.Function.RecvTypeArgs = append(node.Function.RecvTypeArgs, parsed)
-			} else {
-				node.Function.TypeArgs = append(node.Function.TypeArgs, parsed)
-			}
-		}
-
-		syntax := fn.Syntax()
-		pos := fn.Pos()
-		if syntax != nil {
-			pos = syntax.Pos()
-			node.Syntax.Start = position(fn.Prog.Fset, syntax.Pos())
-			node.Syntax.End = position(fn.Prog.Fset, syntax.End())
-			switch syntax.(type) {
-			case *ast.FuncDecl:
-				node.Syntax.Kind = SyntaxFuncDecl
-			case *ast.FuncLit:
-				node.Syntax.Kind = SyntaxFuncLit
-			case *ast.RangeStmt:
-				node.Syntax.Kind = SyntaxRange
-			}
-		}
-		file := fn.Prog.Fset.Position(pos).Filename
-		node.Syntax.File = fileID(file, pkgID)
-		functionFiles[fn] = node.Syntax.File
-		if node.Syntax.File != 0 {
-			graph.Files[node.Syntax.File].Functions = append(graph.Files[node.Syntax.File].Functions, id)
-		}
-		graph.Nodes[id] = node
-	}
-
-	for _, callNode := range nodes {
-		node := graph.Nodes[functionIDs[callNode.Func]]
-		if parentID, ok := functionIDs[callNode.Func.Parent()]; ok {
-			id := parentID
-			node.Parent = &id
-		}
-		if originID, ok := functionIDs[callNode.Func.Origin()]; ok {
-			id := originID
-			node.Function.Origin = &id
-		}
-		for _, anon := range callNode.Func.AnonFuncs {
-			if id, ok := functionIDs[anon]; ok {
-				node.Function.AnonFuncs = append(node.Function.AnonFuncs, id)
-			}
-		}
-		slices.Sort(node.Function.AnonFuncs)
-	}
-
-	in := make(map[NodeID]map[NodeID]struct{}, len(nodes))
-	out := make(map[NodeID]map[NodeID]struct{}, len(nodes))
-	fileCalls := make(map[FileID]map[FileID]struct{})
-	fileCalledBy := make(map[FileID]map[FileID]struct{})
-	for _, callNode := range nodes {
-		callerID := functionIDs[callNode.Func]
-		for _, edge := range callNode.Out {
-			calleeID, ok := functionIDs[edge.Callee.Func]
-			if !ok {
+	files := make([]sourceFile, 0)
+	for _, pkg := range ordered {
+		for index, syntax := range pkg.Syntax {
+			if index >= len(pkg.CompiledGoFiles) {
 				continue
 			}
-			if out[callerID] == nil {
-				out[callerID] = make(map[NodeID]struct{})
-			}
-			if in[calleeID] == nil {
-				in[calleeID] = make(map[NodeID]struct{})
-			}
-			out[callerID][calleeID] = struct{}{}
-			in[calleeID][callerID] = struct{}{}
+			files = append(files, sourceFile{pkg: pkg, path: pkg.CompiledGoFiles[index], ast: syntax})
+		}
+	}
+	slices.SortFunc(files, func(left, right sourceFile) int { return strings.Compare(left.path, right.path) })
 
-			callerFile := functionFiles[callNode.Func]
-			calleeFile := functionFiles[edge.Callee.Func]
-			if callerFile == 0 || calleeFile == 0 || callerFile == calleeFile {
+	for _, file := range files {
+		fileID := FileID(len(b.graph.Files) + 1)
+		pkgID := b.packageID(file.pkg.Types)
+		b.graph.Files[fileID] = &File{ID: fileID, Path: file.path, Package: pkgID}
+		for _, declaration := range file.ast.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
 				continue
 			}
-			if fileCalls[callerFile] == nil {
-				fileCalls[callerFile] = make(map[FileID]struct{})
+			current := &sourceFunction{
+				pkg:  file.pkg,
+				body: function.Body,
+				file: fileID,
+				pos:  function.Pos(),
+				end:  function.End(),
+				kind: SyntaxFuncDecl,
+				name: function.Name.Name,
 			}
-			if fileCalledBy[calleeFile] == nil {
-				fileCalledBy[calleeFile] = make(map[FileID]struct{})
+			current.object, _ = file.pkg.TypesInfo.Defs[function.Name].(*types.Func)
+			b.addFunction(current, nil)
+			b.collectLiterals(file.pkg, fileID, current, function.Body)
+		}
+		// Package-level function literals are not descendants of a declaration.
+		for _, declaration := range file.ast.Decls {
+			if _, ok := declaration.(*ast.FuncDecl); !ok {
+				b.collectLiterals(file.pkg, fileID, nil, declaration)
 			}
-			fileCalls[callerFile][calleeFile] = struct{}{}
-			fileCalledBy[calleeFile][callerFile] = struct{}{}
 		}
 	}
-	for id, node := range graph.Nodes {
-		for caller := range in[id] {
-			node.In = append(node.In, caller)
-		}
-		for callee := range out[id] {
-			node.Out = append(node.Out, callee)
-		}
-		slices.Sort(node.In)
-		slices.Sort(node.Out)
-	}
-	for id, file := range graph.Files {
-		for called := range fileCalls[id] {
-			file.Calls = append(file.Calls, called)
-		}
-		for caller := range fileCalledBy[id] {
-			file.CalledBy = append(file.CalledBy, caller)
-		}
-		slices.Sort(file.Functions)
-		slices.Sort(file.Calls)
-		slices.Sort(file.CalledBy)
-	}
+	return nil
+}
 
-	runtimeTypes := result.RuntimeTypes.Keys()
-	sort.Slice(runtimeTypes, func(i, j int) bool { return typeString(runtimeTypes[i]) < typeString(runtimeTypes[j]) })
-	if result.CallGraph.Root != nil && result.CallGraph.Root.Func != nil {
-		prog := result.CallGraph.Root.Func.Prog
-		for _, runtimeType := range runtimeTypes {
-			parsed := MethodSet{Type: typeString(runtimeType)}
-			seen := make(map[NodeID]struct{})
-			for selection := range prog.MethodSets.MethodSet(runtimeType).Methods() {
-				method := prog.MethodValue(selection)
-				if id, ok := functionIDs[method]; ok {
-					seen[id] = struct{}{}
+func (b *graphBuilder) collectLiterals(pkg *packages.Package, file FileID, parent *sourceFunction, syntax ast.Node) {
+	count := 0
+	ast.Inspect(syntax, func(current ast.Node) bool {
+		literal, ok := current.(*ast.FuncLit)
+		if !ok {
+			return true
+		}
+		count++
+		name := "func$" + strconv.Itoa(count)
+		if parent != nil {
+			name = parent.name + "." + name
+		}
+		function := &sourceFunction{
+			pkg: pkg, body: literal.Body, parent: parent,
+			file: file, pos: literal.Pos(), end: literal.End(),
+			kind: SyntaxFuncLit, name: name,
+		}
+		b.addFunction(function, literal)
+		b.collectLiterals(pkg, file, function, literal.Body)
+		return false
+	})
+}
+
+func (b *graphBuilder) addFunction(function *sourceFunction, literal *ast.FuncLit) {
+	id := b.nextNode
+	b.nextNode++
+	function.node = &Node{
+		ID:   id,
+		Name: function.name,
+		Pkg:  b.packageID(function.pkg.Types),
+		Syntax: model.Syntax{
+			Kind:  function.kind,
+			File:  function.file,
+			Start: position(function.pkg.Fset, function.pos),
+			End:   position(function.pkg.Fset, function.end),
+		},
+	}
+	b.graph.Nodes[id] = function.node
+	b.graph.Files[function.file].Functions = append(b.graph.Files[function.file].Functions, id)
+	b.functions = append(b.functions, function)
+	if function.object != nil {
+		b.objectIDs[function.object] = id
+	}
+	if literal != nil {
+		b.literalIDs[literal] = id
+	}
+	if function.parent != nil {
+		parentID := function.parent.node.ID
+		function.node.Parent = &parentID
+		function.parent.node.Function.AnonFuncs = append(function.parent.node.Function.AnonFuncs, id)
+	}
+}
+
+func (b *graphBuilder) connect() {
+	for _, function := range b.functions {
+		if function.pkg.PkgPath == b.rootPackage && function.name == "main" {
+			b.graph.Root = function.node.ID
+		}
+		out := make(map[NodeID]struct{})
+		references := make(map[NodeID]struct{})
+		ast.Inspect(function.body, func(current ast.Node) bool {
+			if literal, ok := current.(*ast.FuncLit); ok {
+				if id, exists := b.literalIDs[literal]; exists {
+					references[id] = struct{}{}
+				}
+				return false
+			}
+			switch current := current.(type) {
+			case *ast.CallExpr:
+				if id := b.callTarget(function.pkg.TypesInfo, current.Fun); id != 0 && id != function.node.ID {
+					out[id] = struct{}{}
+				}
+			case *ast.Ident:
+				if object, ok := function.pkg.TypesInfo.Uses[current].(*types.Func); ok {
+					if id := b.functionID(object); id != 0 && id != function.node.ID {
+						references[id] = struct{}{}
+					}
+				}
+			case *ast.SelectorExpr:
+				if selection := function.pkg.TypesInfo.Selections[current]; selection != nil {
+					if object, ok := selection.Obj().(*types.Func); ok {
+						if id := b.functionID(object); id != 0 && id != function.node.ID {
+							references[id] = struct{}{}
+						}
+					}
 				}
 			}
-			for id := range seen {
-				parsed.Methods = append(parsed.Methods, id)
-			}
-			slices.Sort(parsed.Methods)
-			graph.Program.MethodSets = append(graph.Program.MethodSets, parsed)
-		}
+			return true
+		})
+		function.node.Out = sortedIDs(out)
+		function.node.Function.References = sortedIDs(references)
 	}
 
-	return graph
+	for _, node := range b.graph.Nodes {
+		for _, callee := range node.Out {
+			b.graph.Nodes[callee].In = append(b.graph.Nodes[callee].In, node.ID)
+		}
+	}
+	for _, node := range b.graph.Nodes {
+		slices.Sort(node.In)
+		slices.Sort(node.Function.AnonFuncs)
+	}
+	b.connectFiles()
+}
+
+func (b *graphBuilder) callTarget(info *types.Info, expression ast.Expr) NodeID {
+	switch expression := expression.(type) {
+	case *ast.FuncLit:
+		return b.literalIDs[expression]
+	case *ast.Ident:
+		function, _ := info.Uses[expression].(*types.Func)
+		return b.functionID(function)
+	case *ast.SelectorExpr:
+		if selection := info.Selections[expression]; selection != nil {
+			function, _ := selection.Obj().(*types.Func)
+			return b.functionID(function)
+		}
+		function, _ := info.Uses[expression.Sel].(*types.Func)
+		return b.functionID(function)
+	case *ast.IndexExpr:
+		return b.callTarget(info, expression.X)
+	case *ast.IndexListExpr:
+		return b.callTarget(info, expression.X)
+	case *ast.ParenExpr:
+		return b.callTarget(info, expression.X)
+	}
+	return 0
+}
+
+func (b *graphBuilder) functionID(function *types.Func) NodeID {
+	if function == nil {
+		return 0
+	}
+	origin := function.Origin()
+	if id := b.objectIDs[origin]; id != 0 {
+		b.objectIDs[function] = id
+		return id
+	}
+
+	id := b.nextNode
+	b.nextNode++
+	pkgID := b.packageID(function.Pkg())
+	b.graph.Nodes[id] = &Node{ID: id, Name: function.Name(), Pkg: pkgID}
+	b.objectIDs[origin] = id
+	b.objectIDs[function] = id
+	return id
+}
+
+func (b *graphBuilder) packageID(pkg *types.Package) PackageID {
+	if pkg == nil {
+		return 0
+	}
+	if id := b.packageIDs[pkg]; id != 0 {
+		return id
+	}
+	id := b.nextPackage
+	b.nextPackage++
+	b.packageIDs[pkg] = id
+	b.graph.Packages[id] = &model.Package{Path: pkg.Path(), Name: pkg.Name()}
+	return id
+}
+
+func (b *graphBuilder) connectFiles() {
+	calls := make(map[FileID]map[FileID]struct{})
+	calledBy := make(map[FileID]map[FileID]struct{})
+	for _, node := range b.graph.Nodes {
+		from := node.Syntax.File
+		if from == 0 {
+			continue
+		}
+		for _, callee := range node.Out {
+			to := b.graph.Nodes[callee].Syntax.File
+			if to == 0 || to == from {
+				continue
+			}
+			if calls[from] == nil {
+				calls[from] = make(map[FileID]struct{})
+			}
+			if calledBy[to] == nil {
+				calledBy[to] = make(map[FileID]struct{})
+			}
+			calls[from][to] = struct{}{}
+			calledBy[to][from] = struct{}{}
+		}
+	}
+	for id, file := range b.graph.Files {
+		file.Calls = sortedFileIDs(calls[id])
+		file.CalledBy = sortedFileIDs(calledBy[id])
+		slices.Sort(file.Functions)
+	}
+}
+
+func position(files *token.FileSet, pos token.Pos) model.Position {
+	if pos == token.NoPos {
+		return model.Position{}
+	}
+	value := files.Position(pos)
+	return model.Position{Line: value.Line, Column: value.Column}
+}
+
+func sortedIDs(values map[NodeID]struct{}) []NodeID {
+	result := make([]NodeID, 0, len(values))
+	for id := range values {
+		result = append(result, id)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func sortedFileIDs(values map[FileID]struct{}) []FileID {
+	result := make([]FileID, 0, len(values))
+	for id := range values {
+		result = append(result, id)
+	}
+	slices.Sort(result)
+	return result
 }

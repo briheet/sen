@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -8,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/briheet/sen/internal/adapters"
+	"github.com/briheet/sen/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,20 +30,29 @@ func TestCollect(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.js"), []byte(fixtureApp), 0o600))
 
-	runtime, err := NewRuntime(context.Background(), dir)
+	var stdout, stderr bytes.Buffer
+	runtime, err := NewRuntime(context.Background(), dir, nil, nil, adapters.Output{Stdout: &stdout, Stderr: &stderr})
 	require.NoError(t, err)
 	defer func() { _ = runtime.Cleanup() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	require.NoError(t, runtime.Start(ctx))
+	if err := runtime.Start(ctx); err != nil {
+		t.Fatalf("%v\n%s", err, stderr.String())
+	}
 	done := make(chan error, 1)
 	go func() { done <- runtime.Wait() }()
 
 	observation, err := runtime.Collect(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, observation.Profiles["cpu"].Samples)
-	require.Positive(t, observation.Metrics.LiveHeap)
+	require.Positive(t, observation.Metrics.Node.HeapUsed)
+	require.Positive(t, observation.Metrics.Node.External)
+	require.Positive(t, observation.Metrics.Node.EventLoopDelayP99)
+	require.GreaterOrEqual(t, observation.Metrics.Node.EventLoopUtilization, 0.0)
+	require.Positive(t, observation.Metrics.Node.ActiveResources)
+	require.True(t, observation.Metrics.Process.Has(model.ProcessCPU))
+	require.True(t, observation.Metrics.Process.Has(model.ProcessMemory))
 	require.NotEmpty(t, observation.Trace.Events)
 
 	require.NoError(t, runtime.Stop())
