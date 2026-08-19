@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -10,7 +12,12 @@ import (
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.dump != nil {
-		spew.Fdump(m.dump, msg)
+		if _, raw := msg.(tea.RawMsg); raw {
+			// Raw messages contain the full encoded graph image.
+			_, _ = fmt.Fprintln(m.dump, "(tea.RawMsg) image payload omitted")
+		} else {
+			spew.Fdump(m.dump, msg)
+		}
 	}
 	switch msg := msg.(type) {
 	case enginesDoneMsg:
@@ -19,6 +26,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
 		}
+	}
+	refresh := false
+	switch msg.(type) {
+	case tea.WindowSizeMsg:
+		refresh = true
+	case tea.KeyPressMsg, tea.MouseClickMsg, tea.ColorProfileMsg, tea.BackgroundColorMsg:
+		refresh = true
+	}
+	if _, ok := msg.(interface{ InvalidateView() }); ok {
+		refresh = true
 	}
 
 	componentMsg := msg
@@ -42,6 +59,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		footerHeight := lipgloss.Height(m.footer.View())
 		pageMsg := components.OffsetMouse(componentMsg, 1, 1+headerHeight)
 		pageChanged := previousPage != m.ctx.ActivePage()
+		if pageChanged {
+			refresh = true
+		}
 		if _, resized := componentMsg.(tea.WindowSizeMsg); resized || previousFooterHeight != footerHeight || pageChanged {
 			// Newly selected pages still need the current viewport dimensions.
 			pageMsg = tea.WindowSizeMsg{
@@ -51,7 +71,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		page, pageCmd := page.Update(pageMsg)
 		m.ctx.SetPage(page)
+		if refresh {
+			m.refreshView()
+		}
 		return m, tea.Batch(headerCmd, footerCmd, pageCmd)
+	}
+	if refresh {
+		m.refreshView()
 	}
 	return m, tea.Batch(headerCmd, footerCmd)
 }

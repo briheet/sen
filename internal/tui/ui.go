@@ -56,7 +56,7 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 	theme := styles.Zakura
 	keyMap := keys.NewModel()
 
-	return model{
+	m := model{
 		dump:   dump,
 		ctx:    ctx,
 		header: header.NewModel(ctx),
@@ -65,6 +65,8 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 
 		activeTheme: theme,
 	}
+	m.refreshView()
+	return m
 }
 
 // Init starts every service page.

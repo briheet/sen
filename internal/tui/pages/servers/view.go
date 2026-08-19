@@ -14,7 +14,7 @@ func (m Model) View() tea.View {
 	contentHeight := max(0, m.height-1)
 	content := m.graph.View()
 	if m.Engine.Graph != nil {
-		switch m.pager.Selected() {
+		switch m.pager.Page {
 		case 1:
 			metrics := m.Engine.Graph.Global.Process
 			content = fmt.Sprintf("Runtime\n\nCPU %.2f   Heap %d B   Goroutines %d",
@@ -25,7 +25,7 @@ func (m Model) View() tea.View {
 				trace.Duration, trace.Goroutines, trace.Threads)
 		}
 	}
-	if m.pager.Selected() != 0 {
+	if m.pager.Page != 0 {
 		content = lipgloss.NewStyle().
 			Width(m.width).
 			Height(contentHeight).
@@ -33,7 +33,8 @@ func (m Model) View() tea.View {
 			Foreground(styles.Zakura.Text).
 			Render(content)
 	}
-	view := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, content, m.pager.View()))
+	indicator := lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(m.pager.View())
+	view := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, content, indicator))
 	view.MouseMode = tea.MouseModeCellMotion
 	return view
 }

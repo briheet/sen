@@ -10,8 +10,8 @@ import (
 const (
 	minimumLayoutFrames = 30
 	maximumLayoutFrames = 90
-	maximumReturnFrames = 240
-	edgeLength          = 14.0
+	maximumReturnFrames = 120
+	baseEdgeLength      = 20.0
 	layoutEdgeStrength  = 1.8
 	returnEdgeStrength  = 0.7
 	seedStrength        = 0.35
@@ -29,9 +29,20 @@ type frameMsg struct {
 	generation uint64
 }
 
+type uploadMsg struct {
+	owner         string
+	width, height int
+}
+
 func nextFrame(owner string, generation uint64) tea.Cmd {
 	return tea.Tick(time.Second/framesPerSecond, func(time.Time) tea.Msg {
 		return frameMsg{owner: owner, generation: generation}
+	})
+}
+
+func nextUpload(owner string, width, height int) tea.Cmd {
+	return tea.Tick(time.Second/framesPerSecond, func(time.Time) tea.Msg {
+		return uploadMsg{owner: owner, width: width, height: height}
 	})
 }
 
@@ -40,23 +51,29 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
-		m.trace("resized width=%d height=%d settling=%t", m.width, m.height, m.layoutSettling)
+		m.trace("resized width=%d height=%d cell=%dx%d",
+			m.width, m.height, m.cellWidth, m.cellHeight)
 		if !m.graphics || len(m.nodes) == 0 {
 			return m, nil
 		}
-		if !m.layoutSettling {
-			return m, m.upload()
+		// Let Bubble Tea enter the alternate screen before transmitting pixels.
+		return m, nextUpload(m.owner, m.width, m.height)
+	case uploadMsg:
+		if msg.owner != m.owner || msg.width != m.width || msg.height != m.height {
+			return m, nil
 		}
-		m.animating = true
-		m.generation++
-		return m, tea.Batch(m.upload(), nextFrame(m.owner, m.generation))
+		return m, m.upload()
 	case tea.RawMsg:
-		// Raw uploads are queued before the placeholder frame is rendered.
-		m.ready = m.graphics
-		m.trace("upload accepted ready=%t", m.ready)
+		// The renderer has handed the encoded frame back to Bubble Tea.
+		m.trace("upload accepted")
+		return m, nil
+	case renderFailedMsg:
+		if msg.owner == m.owner {
+			m.renderErr = msg.err
+		}
 		return m, nil
 	case tea.MouseClickMsg:
-		if !m.graphics || m.layoutSettling {
+		if !m.graphics {
 			return m, nil
 		}
 		if msg.Button == tea.MouseLeft && m.beginDrag(msg.X, msg.Y) {
@@ -72,7 +89,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseMotionMsg:
 		if m.graphics && m.dragging >= 0 {
 			m.moveDragged(msg.X, msg.Y)
-			return m, m.upload()
+			// The frame clock renders the latest position and coalesces mouse events.
+			return m, nil
 		}
 	case tea.MouseReleaseMsg:
 		if m.graphics && msg.Button == tea.MouseLeft && m.dragging >= 0 {
@@ -80,31 +98,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.trace("drag stopped node=%q x=%d y=%d", m.nodes[m.dragging].label, msg.X, msg.Y)
 			m.dragging = -1
 			m.layoutFrames = 0
-			return m, m.upload()
+			return m, nil
 		}
 	case frameMsg:
 		if msg.owner != m.owner || msg.generation != m.generation || !m.animating {
 			return m, nil
 		}
-		if m.layoutSettling {
-			motion := m.stepLayout()
+		m.stepAnchored()
+		if m.dragging < 0 {
 			m.layoutFrames++
-			if m.layoutFrames >= maximumLayoutFrames ||
-				m.layoutFrames >= minimumLayoutFrames && motion < settleDistance {
-				m.captureAnchors()
-				m.layoutSettling = false
-				m.trace("layout settled frames=%d", m.layoutFrames)
-			}
-		} else {
-			m.stepAnchored()
-			if m.dragging < 0 {
-				m.layoutFrames++
-			}
 		}
 
 		upload := m.upload()
-		if !m.layoutSettling && m.dragging < 0 &&
-			(m.settled() || m.layoutFrames >= maximumReturnFrames) {
+		if m.dragging < 0 && (m.settled() || m.layoutFrames >= maximumReturnFrames) {
 			m.restoreAnchors()
 			m.animating = false
 			return m, upload
@@ -117,13 +123,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m *Model) resize(width, height int) {
 	m.width = max(0, width)
 	m.height = max(0, height)
+	cellWidth, cellHeight := terminalCellSize()
+	if cellWidth != m.cellWidth || cellHeight != m.cellHeight {
+		m.cellWidth = cellWidth
+		m.cellHeight = cellHeight
+		m.nodeRadius = max(3, float64(cellWidth)*0.65)
+		m.labelFace = newLabelFace(max(8, float64(cellHeight)*0.55))
+	}
 	m.placeholder = ""
 	if m.graphics && m.width > 0 && m.height > 0 {
 		m.placeholder, _ = placeholders(m.imageID, m.width, m.height)
 	}
 	m.layoutFrames = 0
 	if len(m.nodes) == 0 || m.width == 0 || m.height == 0 {
-		m.layoutSettling = false
 		m.animating = false
 		return
 	}
@@ -132,19 +144,17 @@ func (m *Model) resize(width, height int) {
 	for _, node := range m.nodes {
 		maximumDepth = max(maximumDepth, node.depth)
 	}
-	maximumY := max(1, m.height-2-int(graphInsetY))
+	edgeLength := min(baseEdgeLength, max(4, float64(m.width-nodeWidth-int(graphInsetX))/float64(max(1, maximumDepth))))
+	rowGap := min(8, max(4, edgeLength/3))
 	for index := range m.nodes {
 		node := &m.nodes[index]
 		if index == m.root {
 			node.seed = point{x: 0, y: 0}
 		} else {
-			maximumX := max(1, m.width-nodeWidth-int(graphInsetX))
-			x := 1.0
-			if maximumDepth > 0 {
-				x += float64(node.depth) / float64(maximumDepth+1) * float64(maximumX-1)
+			node.seed = point{
+				x: float64(node.depth) * edgeLength,
+				y: 2 + float64(node.row)*rowGap,
 			}
-			y := 1.0 + float64(node.row+1)/float64(node.rowCount+1)*float64(maximumY-1)
-			node.seed = point{x: x, y: y}
 		}
 		node.position = m.clamp(node.seed)
 		node.anchor = point{}
@@ -152,13 +162,29 @@ func (m *Model) resize(width, height int) {
 	}
 	m.pinRoot()
 	for index := range m.edges {
-		m.edges[index].rest = min(edgeLength, max(4, float64(m.width)/4))
+		m.edges[index].rest = edgeLength
 	}
 	m.dragging = -1
-	m.layoutSettling = len(m.nodes) > 1
-	if !m.layoutSettling {
+	if len(m.nodes) > 1 {
+		m.settleInitialLayout()
+	} else {
 		m.captureAnchors()
 	}
+}
+
+// settleInitialLayout calculates stable anchors without encoding intermediate frames.
+func (m *Model) settleInitialLayout() {
+	frames := 0
+	for frames = 1; frames <= maximumLayoutFrames; frames++ {
+		motion := m.stepLayout()
+		if frames >= minimumLayoutFrames && motion < settleDistance {
+			break
+		}
+	}
+	m.captureAnchors()
+	m.animating = false
+	m.layoutFrames = 0
+	m.trace("layout settled frames=%d", min(frames, maximumLayoutFrames))
 }
 
 func (m *Model) stepLayout() float64 {
@@ -279,10 +305,6 @@ func (m *Model) captureAnchors() {
 		node.anchor = node.position
 		node.velocity = point{}
 	}
-	for index := range m.edges {
-		edge := &m.edges[index]
-		edge.rest = distance(m.nodes[edge.from].position, m.nodes[edge.to].position)
-	}
 	m.pinRoot()
 }
 
@@ -301,9 +323,7 @@ func (m *Model) pinRoot() {
 	root := &m.nodes[m.root]
 	root.position = point{x: 0, y: 0}
 	root.velocity = point{}
-	if !m.layoutSettling {
-		root.anchor = root.position
-	}
+	root.anchor = root.position
 }
 
 func (m *Model) beginDrag(x, y int) bool {

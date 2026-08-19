@@ -3,6 +3,7 @@ package tui
 import (
 	"io"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/briheet/sen/internal/tui/components/footer"
 	"github.com/briheet/sen/internal/tui/components/header"
 	"github.com/briheet/sen/internal/tui/components/keys"
@@ -14,6 +15,7 @@ import (
 // model contains the engine data rendered by the TUI.
 type model struct {
 	dump io.Writer // receives Bubble Tea messages when DEBUG is set
+	view tea.View  // cached terminal text; graph pixels are uploaded separately
 
 	// program's context (metrics, business stuff)
 	ctx *context.ProgramContext

@@ -6,13 +6,17 @@ import (
 )
 
 func (m model) View() tea.View {
+	return m.view
+}
+
+// refreshView rebuilds terminal text when visible component state changes.
+func (m *model) refreshView() {
 	var view tea.View
 	if page, ok := m.ctx.Page(m.ctx.ActivePage()); ok {
 		view = page.View()
 	}
 
 	width := max(0, m.width-2)
-	height := max(0, m.height-2)
 	border := lipgloss.RoundedBorder()
 	header := lipgloss.NewStyle().
 		Width(width).
@@ -22,13 +26,9 @@ func (m model) View() tea.View {
 		Width(width).
 		Align(lipgloss.Center).
 		Render(m.footer.View())
-	content := lipgloss.NewStyle().
-		Width(width).
-		Height(max(0, height-lipgloss.Height(header)-lipgloss.Height(footer))).
-		Align(lipgloss.Left, lipgloss.Top).
-		Render(view.Content)
 
-	layout := lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
+	// Pages already own the exact remaining viewport; keep graphics placeholders intact.
+	layout := lipgloss.JoinVertical(lipgloss.Left, header, view.Content, footer)
 	view.Content = lipgloss.NewStyle().
 		Width(m.width).
 		Height(m.height).
@@ -37,5 +37,5 @@ func (m model) View() tea.View {
 		Render(layout)
 	view.AltScreen = true
 	view.WindowTitle = "sen"
-	return view
+	m.view = view
 }

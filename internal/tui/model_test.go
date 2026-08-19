@@ -2,15 +2,18 @@ package tui
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
+	runtimeModel "github.com/briheet/sen/internal/model"
 	"github.com/briheet/sen/internal/tui/pages/kv"
 	"github.com/briheet/sen/internal/tui/pages/servers"
 	"github.com/briheet/sen/internal/tui/styles"
+	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,6 +56,27 @@ func TestModelContainsBuiltEngines(t *testing.T) {
 	require.Contains(t, view.Content, "╭")
 }
 
+func TestGraphBeginsDirectlyBelowHeader(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	static := &runtimeModel.StaticGraph{
+		Root:  1,
+		Nodes: map[runtimeModel.NodeID]*runtimeModel.StaticNode{1: {ID: 1, Name: "main"}},
+	}
+	target := &engine.Engine{
+		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
+		Graph: &runtimeModel.RuntimeGraph{
+			Static: static,
+			Nodes:  map[runtimeModel.NodeID]*runtimeModel.Node{1: {Static: static.Nodes[1]}},
+		},
+	}
+	m := initialModel([]*engine.Engine{target}, []config.Service{target.Service}, "", nil)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	lines := strings.Split(updated.(model).View().Content, "\n")
+	require.Contains(t, lines[1], "api")
+	require.Contains(t, lines[2], string(kitty.Placeholder))
+}
+
 func TestModelMapsKVEngine(t *testing.T) {
 	target := &engine.Engine{Service: config.Service{
 		Name:     "cache",
@@ -76,4 +100,22 @@ func TestModelDumpsMessages(t *testing.T) {
 
 	require.Contains(t, dump.String(), "(tea.WindowSizeMsg)")
 	require.Contains(t, dump.String(), "Width: (int) 80")
+}
+
+func TestModelOmitsRawImagePayloadFromDump(t *testing.T) {
+	var dump bytes.Buffer
+	m := initialModel(nil, nil, "", &dump)
+
+	_, _ = m.Update(tea.RawMsg{Msg: "encoded-image"})
+
+	require.Contains(t, dump.String(), "image payload omitted")
+	require.NotContains(t, dump.String(), "encoded-image")
+}
+
+func TestModelViewUsesCachedTerminalText(t *testing.T) {
+	m := initialModel(nil, nil, "", nil)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	require.Zero(t, testing.AllocsPerRun(100, func() { _ = m.View() }))
 }

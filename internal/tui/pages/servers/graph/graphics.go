@@ -2,41 +2,22 @@ package graph
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
-	"image"
-	"image/png"
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
+	"golang.org/x/sys/unix"
 )
 
 const (
-	maxPlaceholderSpan    = 283
-	maxPooledBufferMemory = 1 << 20
+	maxPlaceholderSpan  = 283
+	minimumRasterHeight = 12
 )
-
-var (
-	encodeBuffers sync.Pool
-	pngBuffers    encoderBufferPool
-)
-
-type encoderBufferPool struct{ buffers sync.Pool }
-
-func (p *encoderBufferPool) Get() *png.EncoderBuffer {
-	buffer, _ := p.buffers.Get().(*png.EncoderBuffer)
-	return buffer
-}
-
-func (p *encoderBufferPool) Put(buffer *png.EncoderBuffer) {
-	p.buffers.Put(buffer)
-}
 
 var errViewportTooLarge = errors.New("graph viewport exceeds Kitty placeholder limits")
 
@@ -46,6 +27,28 @@ func supportsGraphics() bool {
 	return strings.Contains(terminal, "ghostty") || strings.Contains(terminal, "kitty") ||
 		strings.Contains(program, "ghostty") || strings.Contains(program, "kitty") ||
 		os.Getenv("KITTY_WINDOW_ID") != ""
+}
+
+func terminalCellSize() (int, int) {
+	for _, descriptor := range []uintptr{os.Stdout.Fd(), os.Stdin.Fd()} {
+		size, err := unix.IoctlGetWinsize(int(descriptor), unix.TIOCGWINSZ)
+		if err == nil && size.Col > 0 && size.Row > 0 && size.Xpixel > 0 && size.Ypixel > 0 {
+			width := (int(size.Xpixel) + int(size.Col)/2) / int(size.Col)
+			height := (int(size.Ypixel) + int(size.Row)/2) / int(size.Row)
+			return rasterCellSize(max(1, width), max(1, height))
+		}
+	}
+	return fallbackCellWidth, fallbackCellHeight
+}
+
+func rasterCellSize(width, height int) (int, int) {
+	common := width
+	for value := height; value != 0; {
+		common, value = value, common%value
+	}
+	width, height = width/common, height/common
+	scale := max(1, (minimumRasterHeight+height-1)/height)
+	return width * scale, height * scale
 }
 
 func (m *Model) upload() tea.Cmd {
@@ -61,58 +64,25 @@ func (m *Model) upload() tea.Cmd {
 	if m.dump != nil {
 		quiet = 1 // Keep terminal errors visible while debugging.
 	}
-	output := acquireBuffer()
-	defer releaseBuffer(output)
-	err := encodeImage(output, m.renderImage(), &kitty.Options{
-		Action:       kitty.Transmit,
-		ID:           int(m.imageID),
-		Format:       kitty.PNG,
-		Transmission: kitty.Direct,
-		Quiet:        quiet,
+	m.renderSequence++
+	done := make(chan renderResult, 1)
+	nodes := snapshotNodes(m.nodes)
+	m.renderer.submit(renderRequest{
+		face:       m.labelFace,
+		nodes:      nodes,
+		sequence:   m.renderSequence,
+		imageID:    m.imageID,
+		dragging:   m.dragging,
+		width:      m.width,
+		height:     m.height,
+		cellWidth:  m.cellWidth,
+		cellHeight: m.cellHeight,
+		nodeRadius: m.nodeRadius,
+		quiet:      quiet,
+		done:       done,
 	})
-	if err == nil {
-		// A separate virtual placement keeps image transfer independent of layout.
-		placement := &kitty.Options{
-			Action:           kitty.Put,
-			ID:               int(m.imageID),
-			Quiet:            quiet,
-			Columns:          m.width,
-			Rows:             m.height,
-			VirtualPlacement: true,
-			DoNotMoveCursor:  true,
-		}
-		_, err = output.WriteString(ansi.KittyGraphics(nil, placement.Options()...))
-	}
-	if err != nil {
-		m.renderErr = err
-		m.trace("upload failed error=%q", err)
-		return nil
-	}
 	m.renderErr = nil
-	m.trace("upload queued image_id=%d bytes=%d width=%d height=%d", m.imageID, output.Len(), m.width, m.height)
-	return tea.Raw(output.String())
-}
-
-// encodeImage reuses PNG and byte buffers across animation frames.
-func encodeImage(output *bytes.Buffer, image *image.RGBA, options *kitty.Options) error {
-	encoded := acquireBuffer()
-	payload := acquireBuffer()
-	defer releaseBuffer(encoded)
-	defer releaseBuffer(payload)
-
-	encoder := png.Encoder{CompressionLevel: png.BestSpeed, BufferPool: &pngBuffers}
-	if err := encoder.Encode(encoded, image); err != nil {
-		return err
-	}
-	base64Writer := base64.NewEncoder(base64.StdEncoding, payload)
-	if _, err := encoded.WriteTo(base64Writer); err != nil {
-		return err
-	}
-	if err := base64Writer.Close(); err != nil {
-		return err
-	}
-	writeChunks(output, payload.Bytes(), options)
-	return nil
+	return renderCommand(done, m.owner)
 }
 
 func writeChunks(output *bytes.Buffer, payload []byte, options *kitty.Options) {
@@ -133,22 +103,6 @@ func writeChunks(output *bytes.Buffer, payload []byte, options *kitty.Options) {
 		}
 		output.WriteString(ansi.KittyGraphics(payload[offset:end], values...))
 	}
-}
-
-func acquireBuffer() *bytes.Buffer {
-	buffer, _ := encodeBuffers.Get().(*bytes.Buffer)
-	if buffer == nil {
-		return new(bytes.Buffer)
-	}
-	return buffer
-}
-
-func releaseBuffer(buffer *bytes.Buffer) {
-	if buffer.Cap() > maxPooledBufferMemory {
-		return
-	}
-	buffer.Reset()
-	encodeBuffers.Put(buffer)
 }
 
 func placeholders(id uint32, width, height int) (string, error) {

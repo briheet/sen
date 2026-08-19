@@ -3,7 +3,6 @@ package graph
 
 import (
 	"fmt"
-	"image"
 	"io"
 	"math"
 	"os"
@@ -14,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/briheet/sen/internal/model"
 	"github.com/charmbracelet/harmonica"
+	"golang.org/x/image/font"
 )
 
 const (
@@ -48,41 +48,49 @@ type node struct {
 type Model struct {
 	renderErr      error
 	dump           io.Writer
-	canvas         *image.RGBA
+	renderer       *renderer
 	owner          string
 	placeholder    string
 	nodes          []node
 	edges          []edgeModel
 	forceBuffer    []point
 	spring         harmonica.Spring
+	labelFace      font.Face
 	dragOffset     point
 	dragging       int
 	height         int
 	width          int
+	cellHeight     int
+	cellWidth      int
 	root           int
 	layoutFrames   int
 	generation     uint64
+	renderSequence uint64
 	imageID        uint32
+	nodeRadius     float64
 	graphics       bool
-	ready          bool
 	animating      bool
-	layoutSettling bool
 }
 
 // New builds a function graph from analyzed project code.
 func New(owner string, source *model.RuntimeGraph, dump io.Writer) Model {
 	nodes, edges, root := build(source)
 	m := Model{
-		owner:    owner,
-		dump:     dump,
-		nodes:    nodes,
-		edges:    edges,
-		root:     root,
-		spring:   harmonica.NewSpring(harmonica.FPS(framesPerSecond), frequency, damping),
-		graphics: supportsGraphics(),
-		imageID:  nextImageID(),
-		dragging: -1,
+		owner:      owner,
+		dump:       dump,
+		nodes:      nodes,
+		edges:      edges,
+		root:       root,
+		spring:     harmonica.NewSpring(harmonica.FPS(framesPerSecond), frequency, damping),
+		cellWidth:  fallbackCellWidth,
+		cellHeight: fallbackCellHeight,
+		nodeRadius: fallbackNodeRadius,
+		labelFace:  newLabelFace(fallbackLabelSize),
+		graphics:   supportsGraphics(),
+		imageID:    nextImageID(),
+		dragging:   -1,
 	}
+	m.renderer = newRenderer(owner, edges, dump)
 	m.trace("initialized graphics=%t nodes=%d edges=%d term=%q term_program=%q kitty_window=%t",
 		m.graphics, len(nodes), len(edges), os.Getenv("TERM"), os.Getenv("TERM_PROGRAM"), os.Getenv("KITTY_WINDOW_ID") != "")
 	return m

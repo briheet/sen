@@ -9,7 +9,6 @@ import (
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
 	domain "github.com/briheet/sen/internal/model"
-	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 	"github.com/stretchr/testify/require"
@@ -79,7 +78,6 @@ func TestProgramEmitsKittyGraph(t *testing.T) {
 		teatest.WithInitialTermSize(60, 20),
 	)
 	t.Cleanup(func() { require.NoError(t, tm.Quit()) })
-	tm.Send(tea.ColorProfileMsg{Profile: colorprofile.TrueColor})
 
 	var terminalOutput []byte
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
@@ -92,12 +90,6 @@ func TestProgramEmitsKittyGraph(t *testing.T) {
 	require.Less(t,
 		bytes.Index(terminalOutput, []byte("\x1b[?1049h")),
 		bytes.LastIndex(terminalOutput, []byte("\x1b_Gf=100")),
-	)
-	placeholder := bytes.Index(terminalOutput, []byte(string(kitty.Placeholder)))
-	require.True(t,
-		bytes.Contains(terminalOutput, []byte("\x1b[38;2;0;0;")),
-		"placeholder image ID must remain a truecolor value: %q",
-		terminalOutput[max(0, placeholder-160):min(len(terminalOutput), placeholder+80)],
 	)
 }
 

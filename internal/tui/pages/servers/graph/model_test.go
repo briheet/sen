@@ -3,6 +3,9 @@ package graph
 import (
 	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"math"
 	"strings"
 	"testing"
@@ -12,7 +15,7 @@ import (
 	"github.com/briheet/sen/internal/model"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/font"
 )
 
 func TestGraphBuildsProjectFunctionsAndCalls(t *testing.T) {
@@ -45,7 +48,6 @@ func TestGraphDisambiguatesDuplicateFunctionNames(t *testing.T) {
 func TestGraphRendersKittyPlaceholders(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, command := New("api", testRuntimeGraph(), nil).Update(tea.WindowSizeMsg{Width: 80, Height: 16})
-	graph.ready = true
 	view := graph.View()
 
 	require.NotNil(t, command)
@@ -53,6 +55,42 @@ func TestGraphRendersKittyPlaceholders(t *testing.T) {
 	require.Equal(t, 16, lipgloss.Height(view))
 	require.Contains(t, view, string(kitty.Placeholder))
 	require.NotContains(t, view, "router")
+}
+
+func TestPlaceholdersEncodeImageIDAsTrueColor(t *testing.T) {
+	placeholder, err := placeholders(0x010203, 2, 1)
+
+	require.NoError(t, err)
+	require.Contains(t, placeholder, "\x1b[38;2;1;2;3m")
+	require.Contains(t, placeholder, string(kitty.Placeholder))
+}
+
+func TestRasterCellSizePreservesTerminalAspectRatio(t *testing.T) {
+	width, height := rasterCellSize(10, 28)
+
+	require.Equal(t, 5, width)
+	require.Equal(t, 14, height)
+	require.Equal(t, 10*height, 28*width)
+}
+
+func TestGraphCalculatesBaseEdgeLengthBeforeRendering(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	graph, _ := New("api", testRuntimeGraph(), nil).Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	for _, edge := range graph.edges {
+		require.Equal(t, baseEdgeLength, edge.rest)
+		if graph.nodes[edge.to].depth == graph.nodes[edge.from].depth+1 {
+			require.LessOrEqual(t,
+				distance(graph.nodes[edge.from].position, graph.nodes[edge.to].position),
+				baseEdgeLength*1.2,
+			)
+		}
+	}
+
+	graph = settleLayout(graph)
+	for _, edge := range graph.edges {
+		require.Equal(t, baseEdgeLength, edge.rest)
+	}
 }
 
 func TestGraphTransmitsPNGBeforeVirtualPlacement(t *testing.T) {
@@ -83,28 +121,44 @@ func TestGraphDebugLogKeepsTerminalErrors(t *testing.T) {
 func TestGraphDrawsEdgesBeforeNodes(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", testRuntimeGraph(), nil).Update(tea.WindowSizeMsg{Width: 80, Height: 16})
-	canvas := graph.renderImage()
+	canvas := graph.renderer.renderImage(renderRequest{
+		face:       graph.labelFace,
+		nodes:      graph.nodes,
+		dragging:   graph.dragging,
+		width:      graph.width,
+		height:     graph.height,
+		cellWidth:  graph.cellWidth,
+		cellHeight: graph.cellHeight,
+		nodeRadius: graph.nodeRadius,
+	})
 	edge := graph.edges[0]
-	from, to := edgePoints(graph.nodes[edge.from], graph.nodes[edge.to])
+	from, to := edgePoints(graph.nodes[edge.from], graph.nodes[edge.to], graph.cellWidth, graph.cellHeight, graph.nodeRadius)
 	middle := point{x: (from.x + to.x) / 2, y: (from.y + to.y) / 2}
 
 	edgePixels := 0
 	for y := int(middle.y) - 2; y <= int(middle.y)+2; y++ {
 		for x := int(middle.x) - 2; x <= int(middle.x)+2; x++ {
-			if canvas.RGBAAt(x, y).A != 0 {
+			if pixelAlpha(canvas, x, y) != 0 {
 				edgePixels++
 			}
 		}
 	}
 	require.Positive(t, edgePixels)
-	require.NotZero(t, canvas.RGBAAt(int(from.x), int(from.y)).A)
+	require.NotZero(t, pixelAlpha(canvas, int(from.x), int(from.y)))
 
-	label := labelPoint(canvas.Bounds(), pixelPoint(graph.nodes[0].position), graph.nodes[0].label)
+	label := labelPoint(
+		canvas.Bounds(),
+		pixelPoint(graph.nodes[0].position, graph.cellWidth, graph.cellHeight),
+		graph.nodes[0].label,
+		graph.labelFace,
+		graph.nodeRadius,
+	)
 	labelStart := label.X.Ceil()
+	labelWidth := font.MeasureString(graph.labelFace, graph.nodes[0].label).Ceil()
 	labelPixels := 0
-	for y := max(0, label.Y.Ceil()-basicfont.Face7x13.Height); y < min(canvas.Bounds().Dy(), label.Y.Ceil()+1); y++ {
-		for x := labelStart; x < min(canvas.Bounds().Dx(), labelStart+glyphWidth*len(graph.nodes[0].label)); x++ {
-			if canvas.RGBAAt(x, y).A != 0 {
+	for y := max(0, label.Y.Ceil()-graph.labelFace.Metrics().Height.Ceil()); y < min(canvas.Bounds().Dy(), label.Y.Ceil()+1); y++ {
+		for x := labelStart; x < min(canvas.Bounds().Dx(), labelStart+labelWidth); x++ {
+			if pixelAlpha(canvas, x, y) != 0 {
 				labelPixels++
 			}
 		}
@@ -112,12 +166,58 @@ func TestGraphDrawsEdgesBeforeNodes(t *testing.T) {
 	require.Positive(t, labelPixels)
 }
 
+func TestGraphUsesPalettedFrames(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	graph, _ := New("api", testRuntimeGraph(), nil).Update(tea.WindowSizeMsg{Width: 80, Height: 16})
+	canvas := graph.renderer.renderImage(renderRequest{
+		face:       graph.labelFace,
+		nodes:      graph.nodes,
+		dragging:   graph.dragging,
+		width:      graph.width,
+		height:     graph.height,
+		cellWidth:  graph.cellWidth,
+		cellHeight: graph.cellHeight,
+		nodeRadius: graph.nodeRadius,
+	})
+
+	require.Len(t, canvas.Palette, 1+4*alphaLevels)
+	require.Equal(t, canvas.Bounds().Dx()*canvas.Bounds().Dy(), len(canvas.Pix))
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, canvas))
+	configuration, err := png.DecodeConfig(&encoded)
+	require.NoError(t, err)
+	_, paletted := configuration.ColorModel.(color.Palette)
+	require.True(t, paletted)
+}
+
+func TestRendererDropsStaleFrames(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	graph, _ := New("api", testRuntimeGraph(), nil).Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	commands := make([]tea.Cmd, 20)
+	for index := range commands {
+		graph.nodes[1].position.x += 0.1
+		commands[index] = graph.upload()
+	}
+
+	rendered := 0
+	for _, command := range commands {
+		if _, ok := command().(tea.RawMsg); ok {
+			rendered++
+		}
+	}
+	require.Equal(t, 1, rendered)
+}
+
+func pixelAlpha(canvas image.Image, x, y int) uint32 {
+	_, _, _, alpha := canvas.At(x, y).RGBA()
+	return alpha
+}
+
 func TestGraphSettlesAndPinsRoot(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", testRuntimeGraph(), nil).Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	graph = settleLayout(graph)
 
-	require.False(t, graph.layoutSettling)
 	require.False(t, graph.animating)
 	require.Equal(t, point{x: 0, y: 0}, graph.nodes[graph.root].position)
 	for _, node := range graph.nodes {
@@ -159,7 +259,8 @@ func TestDraggedNodeJigglesNeighborAndReturnsToAnchor(t *testing.T) {
 	graph, command := graph.Update(click)
 	require.NotNil(t, command)
 	require.Equal(t, dragged, graph.dragging)
-	graph, _ = graph.Update(tea.MouseMotionMsg{X: int(target.x), Y: int(target.y), Button: tea.MouseLeft})
+	graph, command = graph.Update(tea.MouseMotionMsg{X: int(target.x), Y: int(target.y), Button: tea.MouseLeft})
+	require.Nil(t, command, "mouse events are rendered by the frame clock")
 	for range 5 {
 		graph, _ = graph.Update(frameMsg{owner: "api", generation: graph.generation})
 	}
@@ -174,7 +275,7 @@ func TestDraggedNodeJigglesNeighborAndReturnsToAnchor(t *testing.T) {
 	require.Equal(t, point{x: 0, y: 0}, graph.nodes[graph.root].position)
 }
 
-func TestResizeRestartsLayout(t *testing.T) {
+func TestResizePresettlesLayout(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", testRuntimeGraph(), nil).Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	graph = settleLayout(graph)
@@ -183,9 +284,11 @@ func TestResizeRestartsLayout(t *testing.T) {
 	graph, command := graph.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 
 	require.NotNil(t, command)
-	require.True(t, graph.layoutSettling)
-	require.Greater(t, graph.generation, generation)
+	require.Equal(t, generation, graph.generation)
 	require.Equal(t, point{x: 0, y: 0}, graph.nodes[graph.root].position)
+	for _, node := range graph.nodes {
+		require.Equal(t, node.position, node.anchor)
+	}
 }
 
 func TestGraphUsesUniqueImageIDs(t *testing.T) {
@@ -233,7 +336,9 @@ func BenchmarkGraphUpload(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = graph.upload()
+		if message := graph.upload()(); message == nil {
+			b.Fatal("dropped sequential frame")
+		}
 	}
 	b.ReportMetric(float64(wireBytes), "wire-B/frame")
 }
@@ -249,7 +354,6 @@ func BenchmarkGraphBuild(b *testing.B) {
 func BenchmarkGraphView(b *testing.B) {
 	b.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", testRuntimeGraph(), nil).Update(tea.WindowSizeMsg{Width: 80, Height: 20})
-	graph.ready = true
 	b.ReportAllocs()
 	for b.Loop() {
 		if graph.View() == "" {
