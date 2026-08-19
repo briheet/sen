@@ -11,12 +11,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/briheet/senbon/internal/adapters"
-	runtimemetrics "github.com/briheet/senbon/internal/adapters/golang/runtime/metrics"
-	runtimepprof "github.com/briheet/senbon/internal/adapters/golang/runtime/pprof"
-	runtimeprocess "github.com/briheet/senbon/internal/adapters/golang/runtime/process"
-	runtimetrace "github.com/briheet/senbon/internal/adapters/golang/runtime/trace"
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/adapters"
+	runtimemetrics "github.com/briheet/sen/internal/adapters/golang/runtime/metrics"
+	runtimepprof "github.com/briheet/sen/internal/adapters/golang/runtime/pprof"
+	runtimeprocess "github.com/briheet/sen/internal/adapters/golang/runtime/process"
+	runtimetrace "github.com/briheet/sen/internal/adapters/golang/runtime/trace"
+	"github.com/briheet/sen/internal/model"
 )
 
 // Runtime owns a target process and its collected runtime data.
@@ -32,18 +32,18 @@ type Runtime struct {
 var _ adapters.Runtime = (*Runtime)(nil)
 
 const (
-	metricsPath   = "/debug/senbon/metrics"
+	metricsPath   = "/debug/sen/metrics"
 	pprofPath     = "/debug/pprof/"
 	tracePath     = "/debug/pprof/trace"
-	collectorURL  = "http://senbon"
+	collectorURL  = "http://sen"
 	cpuProfile    = "cpu"
 	collectRetry  = 10 * time.Millisecond
 	collectWindow = time.Second
 )
 
 // NewRuntime builds the target process.
-func NewRuntime(ctx context.Context, sourceDir string) (*Runtime, error) {
-	process, err := runtimeprocess.NewProcess(ctx, sourceDir)
+func NewRuntime(ctx context.Context, sourceDir string, buildArgs, runArgs []string, output adapters.Output) (*Runtime, error) {
+	process, err := runtimeprocess.NewProcess(ctx, sourceDir, buildArgs, runArgs, output)
 	if err != nil {
 		return nil, err
 	}

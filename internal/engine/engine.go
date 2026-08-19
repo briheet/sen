@@ -1,42 +1,44 @@
-// Package engine joins a target adapter with Senbon's normalized model.
+// Package engine joins a target adapter with sen's normalized model.
 package engine
 
 import (
 	"context"
 	"time"
 
-	"github.com/briheet/senbon/internal/adapters"
-	"github.com/briheet/senbon/internal/adapters/factory"
-	"github.com/briheet/senbon/internal/helpers"
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/adapters"
+	"github.com/briheet/sen/internal/adapters/factory"
+	"github.com/briheet/sen/internal/config"
+	"github.com/briheet/sen/internal/helpers"
+	"github.com/briheet/sen/internal/model"
 )
 
 const collectionTimeout = time.Minute
 
-// Engine owns a target runtime and the graph exposed to the TUI.
+// Engine owns one configured service, its runtime, and its graph.
 type Engine struct {
+	Service config.Service
 	Runtime adapters.Runtime
 	Graph   *model.RuntimeGraph
 }
 
-// NewEngine resolves, analyzes, and opens a target application.
-func NewEngine(ctx context.Context, sourcePath, language string) (*Engine, error) {
-	if err := helpers.ValidateSourcePath(sourcePath); err != nil {
+// NewEngine resolves, analyzes, and opens a configured service.
+func NewEngine(ctx context.Context, service config.Service, output adapters.Output) (*Engine, error) {
+	if err := helpers.ValidateSourcePath(service.Path); err != nil {
 		return nil, err
 	}
-	application, err := factory.Application(language)
+	application, err := factory.Application(string(service.Lang))
 	if err != nil {
 		return nil, err
 	}
-	static, namespace, err := application.Analyze(ctx, sourcePath)
+	static, namespace, err := application.Analyze(ctx, service.Path, service.BuildArgs)
 	if err != nil {
 		return nil, err
 	}
-	target, err := application.Open(ctx, sourcePath)
+	target, err := application.Open(ctx, service.Path, service.BuildArgs, service.RunArgs, output)
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{Runtime: target, Graph: model.BuildRuntimeGraph(namespace, static)}, nil
+	return &Engine{Service: service, Runtime: target, Graph: model.BuildRuntimeGraph(namespace, static)}, nil
 }
 
 // Start launches the target application.

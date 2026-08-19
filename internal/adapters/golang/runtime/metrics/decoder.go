@@ -5,7 +5,7 @@ import (
 	"io"
 	runtimemetrics "runtime/metrics"
 
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/model"
 )
 
 type wireMetric struct {

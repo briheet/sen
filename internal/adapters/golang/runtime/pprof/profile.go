@@ -1,7 +1,7 @@
 // Package pprof decodes pprof data produced by a Go target.
 package pprof
 
-import "github.com/briheet/senbon/internal/model"
+import "github.com/briheet/sen/internal/model"
 
 type (
 	LocationID = model.ProfileLocationID

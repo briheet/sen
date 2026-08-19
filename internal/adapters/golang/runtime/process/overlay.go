@@ -23,9 +23,9 @@ import (
 	runtimemetrics "runtime/metrics"
 )
 
-const senbonCollectorSocket = "SENBON_COLLECTOR_SOCKET"
+const senCollectorSocket = "SEN_COLLECTOR_SOCKET"
 
-type senbonCollectorMetric struct {
+type senCollectorMetric struct {
 	Name      string
 	Uint64    uint64
 	Float64   float64
@@ -33,7 +33,7 @@ type senbonCollectorMetric struct {
 }
 
 func init() {
-	socket := os.Getenv(senbonCollectorSocket)
+	socket := os.Getenv(senCollectorSocket)
 	if socket == "" {
 		return
 	}
@@ -44,7 +44,7 @@ func init() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/debug/senbon/metrics", senbonCollectorMetrics)
+	mux.HandleFunc("/debug/sen/metrics", senCollectorMetrics)
 	mux.HandleFunc("/debug/pprof/", runtimepprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", runtimepprof.Cmdline)
 	mux.HandleFunc("/debug/pprof/profile", runtimepprof.Profile)
@@ -53,7 +53,7 @@ func init() {
 	go func() { _ = http.Serve(listener, mux) }()
 }
 
-func senbonCollectorMetrics(writer http.ResponseWriter, _ *http.Request) {
+func senCollectorMetrics(writer http.ResponseWriter, _ *http.Request) {
 	descriptions := runtimemetrics.All()
 	samples := make([]runtimemetrics.Sample, len(descriptions))
 	for index, description := range descriptions {
@@ -61,9 +61,9 @@ func senbonCollectorMetrics(writer http.ResponseWriter, _ *http.Request) {
 	}
 	runtimemetrics.Read(samples)
 
-	result := make([]senbonCollectorMetric, 0, len(samples))
+	result := make([]senCollectorMetric, 0, len(samples))
 	for _, sample := range samples {
-		metric := senbonCollectorMetric{Name: sample.Name}
+		metric := senCollectorMetric{Name: sample.Name}
 		switch sample.Value.Kind() {
 		case runtimemetrics.KindUint64:
 			metric.Uint64 = sample.Value.Uint64()

@@ -6,13 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/briheet/sen/internal/adapters"
 )
 
 const (
-	tempDirPattern           = "senbon-*"
+	tempDirPattern           = "sen-*"
 	binaryFileName           = "main"
 	collectorSocketExtension = ".sock"
-	collectorSocketEnvName   = "SENBON_COLLECTOR_SOCKET"
+	collectorSocketEnvName   = "SEN_COLLECTOR_SOCKET"
 )
 
 // Process handles the lifecycle of the target program.
@@ -25,8 +27,8 @@ type Process struct {
 	startErr        error
 }
 
-// NewProcess builds the target program with the Senbon overlay.
-func NewProcess(ctx context.Context, sourceDir string) (process *Process, err error) {
+// NewProcess builds the target program with the sen overlay.
+func NewProcess(ctx context.Context, sourceDir string, buildArgs, runArgs []string, output adapters.Output) (process *Process, err error) {
 	sourceDir, err = filepath.Abs(sourceDir)
 	if err != nil {
 		return nil, err
@@ -52,20 +54,22 @@ func NewProcess(ctx context.Context, sourceDir string) (process *Process, err er
 	}
 
 	binaryPath := filepath.Join(tempDir, binaryFileName)
-	buildCmd := exec.CommandContext(ctx, "go", "build", "-overlay="+overlayPath, "-o", binaryPath, ".")
+	args := append([]string{"build"}, buildArgs...)
+	args = append(args, "-overlay="+overlayPath, "-o", binaryPath, ".")
+	buildCmd := exec.CommandContext(ctx, "go", args...)
 	buildCmd.Dir = sourceDir
-	buildCmd.Stderr = os.Stderr
+	buildCmd.Stderr = output.Stderr
 	buildCmd.Stdin = os.Stdin
-	buildCmd.Stdout = os.Stdout
+	buildCmd.Stdout = output.Stdout
 	if err := buildCmd.Run(); err != nil {
 		return nil, err
 	}
 
-	runCmd := exec.CommandContext(ctx, binaryPath)
+	runCmd := exec.CommandContext(ctx, binaryPath, runArgs...)
 	runCmd.Dir = sourceDir
-	runCmd.Stderr = os.Stderr
-	runCmd.Stdin = os.Stdin
-	runCmd.Stdout = os.Stdout
+	runCmd.Stderr = output.Stderr
+	// Bubble Tea owns terminal input while services run.
+	runCmd.Stdout = output.Stdout
 	collectorSocket := filepath.Join(os.TempDir(), filepath.Base(tempDir)+collectorSocketExtension)
 	runCmd.Env = append(os.Environ(), collectorSocketEnvName+"="+collectorSocket)
 

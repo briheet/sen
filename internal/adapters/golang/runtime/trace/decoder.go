@@ -6,7 +6,7 @@ import (
 	exptrace "golang.org/x/exp/trace"
 )
 
-// Read decodes a Go runtime trace into Senbon's representation.
+// Read decodes a Go runtime trace into sen's representation.
 func Read(r io.Reader) (*Trace, error) {
 	reader, err := exptrace.NewReader(r)
 	if err != nil {

@@ -1,7 +1,7 @@
 // Package trace decodes runtime traces produced by a Go target.
 package trace
 
-import "github.com/briheet/senbon/internal/model"
+import "github.com/briheet/sen/internal/model"
 
 type (
 	EventKind    = model.EventKind

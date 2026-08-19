@@ -1,5 +1,5 @@
 {
-  description = "senbon: Source level runtime and analysis visualization";
+  description = "sen: Source level runtime and analysis visualization";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";

@@ -11,11 +11,11 @@ let ts;
 try {
   ts = createRequire(path.join(projectDir, 'noop.js'))('typescript');
 } catch (err) {
-  console.error('senbon: typescript not found. Install it with `npm i -D typescript`.');
+  console.error('sen: typescript not found. Install it with `npm i -D typescript`.');
   process.exit(1);
 }
 if (typeof ts.createSourceFile !== 'function') {
-  console.error('senbon: incompatible typescript version. Install a compiler-API build with `npm i -D typescript@^5.9`.');
+  console.error('sen: incompatible typescript version. Install a compiler-API build with `npm i -D typescript@^5.9`.');
   process.exit(1);
 }
 
@@ -49,7 +49,7 @@ function resolveEntry(dir) {
   for (const name of ['index.js', 'index.mjs', 'index.cjs', 'index.ts']) {
     if (fs.existsSync(path.join(dir, name))) return path.join(dir, name);
   }
-  console.error('senbon: no entry file found (package.json main/bin or index.*)');
+  console.error('sen: no entry file found (package.json main/bin or index.*)');
   process.exit(1);
 }
 

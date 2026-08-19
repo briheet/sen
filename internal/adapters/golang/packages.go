@@ -8,10 +8,10 @@ import (
 	"go/types"
 	"strings"
 
-	"github.com/briheet/senbon/internal/adapters"
-	"github.com/briheet/senbon/internal/adapters/golang/analysis"
-	targetruntime "github.com/briheet/senbon/internal/adapters/golang/runtime"
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/adapters"
+	"github.com/briheet/sen/internal/adapters/golang/analysis"
+	targetruntime "github.com/briheet/sen/internal/adapters/golang/runtime"
+	"github.com/briheet/sen/internal/model"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -23,8 +23,8 @@ type Adapter struct{}
 var _ adapters.Application = (*Adapter)(nil)
 
 // Analyze loads and converts a Go application into the normalized graph.
-func (*Adapter) Analyze(ctx context.Context, sourcePath string) (*model.StaticGraph, string, error) {
-	packages, err := LoadPackages(ctx, sourcePath)
+func (*Adapter) Analyze(ctx context.Context, sourcePath string, buildArgs []string) (*model.StaticGraph, string, error) {
+	packages, err := LoadPackages(ctx, sourcePath, buildArgs)
 	if err != nil {
 		return nil, "", err
 	}
@@ -36,8 +36,8 @@ func (*Adapter) Analyze(ctx context.Context, sourcePath string) (*model.StaticGr
 }
 
 // Open builds the instrumented Go target.
-func (*Adapter) Open(ctx context.Context, sourcePath string) (adapters.Runtime, error) {
-	return targetruntime.NewRuntime(ctx, sourcePath)
+func (*Adapter) Open(ctx context.Context, sourcePath string, buildArgs, runArgs []string, output adapters.Output) (adapters.Runtime, error) {
+	return targetruntime.NewRuntime(ctx, sourcePath, buildArgs, runArgs, output)
 }
 
 // Go packages error
@@ -72,12 +72,13 @@ func (e *PackageErrors) Error() string {
 }
 
 // This function helps with setting required config, loading source info
-func LoadPackages(ctx context.Context, sourcePath string) ([]*packages.Package, error) {
+func LoadPackages(ctx context.Context, sourcePath string, buildArgs []string) ([]*packages.Package, error) {
 	// Build config and loading packages
 	pkgConfig := packages.Config{
-		Mode:    packages.LoadAllSyntax | packages.NeedModule,
-		Context: ctx,
-		Dir:     sourcePath,
+		Mode:       packages.LoadAllSyntax | packages.NeedModule,
+		Context:    ctx,
+		Dir:        sourcePath,
+		BuildFlags: buildArgs,
 	}
 
 	// Pattern resolves to Config.Dir's source dir

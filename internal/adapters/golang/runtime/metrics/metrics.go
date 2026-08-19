@@ -1,7 +1,7 @@
-// Package metrics defines Senbon's representation of Go runtime metrics.
+// Package metrics defines sen's representation of Go runtime metrics.
 package metrics
 
-import "github.com/briheet/senbon/internal/model"
+import "github.com/briheet/sen/internal/model"
 
 const (
 	// CPU and GC metrics.

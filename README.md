@@ -1,29 +1,38 @@
 ![Senbon Ascii](./assets/senbon_ascii.png)
 
-Senbon analyzes an application's source code and combines it with live runtime
-data so performance costs can be displayed on files, functions, and call paths.
+Inspired by SenbonZakura, sen analyzes applications as collections of processes and supporting
+services. It combines source analysis with live runtime and service telemetry
+so performance costs and interactions can be visualized across files,
+functions, call paths, and dependencies.
 
-Senbon currently supports Go and Node.js, combining:
+Sen currently supports Go and Node.js, combining:
 
 - Static call-graph analysis
 - Process and memory measurements
 - CPU profiles and runtime traces
 - Source-level mapping into a TUI-owned `RuntimeGraph`
 
+Project configuration can also describe supporting services such as Redis,
+with additional datastore integrations, including PostgreSQL, being added.
+
 The target source is not modified. Adapters instrument each runtime and remove
 their temporary artifacts on exit.
 
 ## Usage
 
-Go 1.25.12 or newer is required to build Senbon.
+Go 1.25.12 or newer is required to build sen.
 
 ```sh
-go build -o bin/senbon ./cmd/senbon
-./bin/senbon run node ./examples/node
+go build -o bin/sen ./cmd/sen
+./bin/sen run
+./bin/sen run ./examples/go/http
+./bin/sen run --config ./config/sen.toml
 ```
 
-The CLI currently runs and samples the target. The TUI is under development.
+Use `-c` as the short form of `--config`.
+
+The CLI currently runs and samples configured targets. The TUI is under development.
 
 ## License
 
-Senbon is available under the [MIT License](LICENSE).
+Sen is available under the [MIT License](LICENSE).

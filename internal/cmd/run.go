@@ -1,30 +1,42 @@
 package cmd
 
 import (
-	"github.com/briheet/senbon/internal/engine"
+	"github.com/briheet/sen/internal/config"
+	"github.com/briheet/sen/internal/tui"
 	"github.com/spf13/cobra"
 )
 
-func RunCmd() *cobra.Command {
-	runCmd := &cobra.Command{
-		Use:   "run <language> <path>",
-		Short: "Analyze and run an application",
-		Long: `Build and run an application.
+const defaultConfigPath = config.DefaultPath
 
-Senbon loads the target program, performs static analysis,
-builds the program, starts runtime instrumentation, and
-launches the TUI.`,
-		Example: "senbon run node ./examples/node",
-		Args:    cobra.ExactArgs(2),
+// RunCmd loads configured services and runs their supported engines.
+func RunCmd() *cobra.Command {
+	var configPath string
+	runCmd := &cobra.Command{
+		Use:   "run [path]",
+		Short: "Analyze and run a multi-service project",
+		Long: `Load, analyze, and run services defined in a sen project.
+
+Application runtimes and supporting services are loaded from configuration
+and brought together for unified analysis and visualization.`,
+		Example: "sen run\n  sen run ./examples/go/http\n  sen run --config ./config/sen.toml\n  sen run -c ./config",
+		Args:    cobra.MaximumNArgs(1),
 		Version: Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			target, err := engine.NewEngine(cmd.Context(), args[1], args[0])
+			path, err := config.ResolvePath(configPath, cmd.Flags().Changed("config"), args)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = target.Cleanup() }()
-			return target.Run()
+			configuration, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			application, err := tui.NewTui(cmd.Context(), configuration)
+			if err != nil {
+				return err
+			}
+			return application.Run(cmd.Context())
 		},
 	}
+	runCmd.Flags().StringVarP(&configPath, "config", "c", defaultConfigPath, "path to sen.toml")
 	return runCmd
 }

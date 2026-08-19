@@ -4,9 +4,9 @@ package factory
 import (
 	"errors"
 
-	"github.com/briheet/senbon/internal/adapters"
-	golangadapter "github.com/briheet/senbon/internal/adapters/golang"
-	nodeadapter "github.com/briheet/senbon/internal/adapters/node"
+	"github.com/briheet/sen/internal/adapters"
+	golangadapter "github.com/briheet/sen/internal/adapters/golang"
+	nodeadapter "github.com/briheet/sen/internal/adapters/node"
 )
 
 // ErrUnsupportedTarget reports an unknown language.

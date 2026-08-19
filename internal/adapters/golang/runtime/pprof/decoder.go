@@ -7,7 +7,7 @@ import (
 	googleprofile "github.com/google/pprof/profile"
 )
 
-// Read decodes a Go pprof profile into Senbon's representation.
+// Read decodes a Go pprof profile into sen's representation.
 func Read(r io.Reader) (*Profile, error) {
 	source, err := googleprofile.Parse(r)
 	if err != nil {

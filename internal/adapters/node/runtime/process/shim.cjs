@@ -1,8 +1,8 @@
 // Embedded metrics shim. Run via node --require.
 const fs = require('fs');
 
-const file = process.env.SENBON_METRICS_FILE;
-const intervalMs = Number(process.env.SENBON_METRICS_INTERVAL_MS || 100);
+const file = process.env.SEN_METRICS_FILE;
+const intervalMs = Number(process.env.SEN_METRICS_INTERVAL_MS || 100);
 
 if (!file) return;
 

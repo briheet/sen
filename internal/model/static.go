@@ -24,7 +24,7 @@ const (
 	SyntaxRange
 )
 
-// StaticGraph is Senbon's language-neutral representation of analyzed code.
+// StaticGraph is sen's language-neutral representation of analyzed code.
 type StaticGraph struct {
 	Root     NodeID
 	Nodes    map[NodeID]*StaticNode

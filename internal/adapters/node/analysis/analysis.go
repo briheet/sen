@@ -1,4 +1,4 @@
-// Package analysis converts a Node.js project into Senbon's normalized graph.
+// Package analysis converts a Node.js project into sen's normalized graph.
 package analysis
 
 import (
@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/model"
 )
 
 //go:embed analyze.cjs
@@ -124,7 +124,7 @@ func parse(data []byte, projectDir string) (*model.StaticGraph, error) {
 
 // writeHelper writes the embedded analyzer to a temporary file.
 func writeHelper() (string, error) {
-	file, err := os.CreateTemp("", "senbon-analyze-*.cjs")
+	file, err := os.CreateTemp("", "sen-analyze-*.cjs")
 	if err != nil {
 		return "", err
 	}

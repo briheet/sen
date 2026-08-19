@@ -1,11 +1,14 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/briheet/sen/internal/adapters"
 )
 
 func TestCollectRuntimeData(t *testing.T) {
@@ -17,7 +20,8 @@ func TestCollectRuntimeData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	observed, err := NewRuntime(context.Background(), sourceDir)
+	var stdout, stderr bytes.Buffer
+	observed, err := NewRuntime(context.Background(), sourceDir, nil, nil, adapters.Output{Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +38,7 @@ func TestCollectRuntimeData(t *testing.T) {
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal(err)
+			t.Fatalf("%v\n%s", err, stderr.String())
 		case <-time.After(10 * time.Millisecond):
 		}
 	}

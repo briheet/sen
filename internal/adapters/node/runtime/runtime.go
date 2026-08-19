@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/briheet/senbon/internal/adapters"
-	"github.com/briheet/senbon/internal/adapters/node/runtime/cdp"
-	"github.com/briheet/senbon/internal/adapters/node/runtime/cpuprofile"
-	"github.com/briheet/senbon/internal/adapters/node/runtime/process"
-	"github.com/briheet/senbon/internal/model"
+	"github.com/briheet/sen/internal/adapters"
+	"github.com/briheet/sen/internal/adapters/node/runtime/cdp"
+	"github.com/briheet/sen/internal/adapters/node/runtime/cpuprofile"
+	"github.com/briheet/sen/internal/adapters/node/runtime/process"
+	"github.com/briheet/sen/internal/model"
 )
 
 const (
@@ -35,8 +35,8 @@ type Runtime struct {
 var _ adapters.Runtime = (*Runtime)(nil)
 
 // NewRuntime builds the target process for the given source directory.
-func NewRuntime(ctx context.Context, sourcePath string) (*Runtime, error) {
-	target, err := process.NewProcess(ctx, sourcePath)
+func NewRuntime(ctx context.Context, sourcePath string, buildArgs, runArgs []string, output adapters.Output) (*Runtime, error) {
+	target, err := process.NewProcess(ctx, sourcePath, buildArgs, runArgs, output)
 	if err != nil {
 		return nil, err
 	}

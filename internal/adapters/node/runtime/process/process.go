@@ -7,7 +7,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,12 +15,14 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/briheet/sen/internal/adapters"
 )
 
 const (
-	tempDirPattern    = "senbon-node-*"
-	metricsFileEnv    = "SENBON_METRICS_FILE"
-	metricsIntervalMs = "SENBON_METRICS_INTERVAL_MS"
+	tempDirPattern    = "sen-node-*"
+	metricsFileEnv    = "SEN_METRICS_FILE"
+	metricsIntervalMs = "SEN_METRICS_INTERVAL_MS"
 	inspectAddr       = "127.0.0.1:0"
 )
 
@@ -32,16 +33,18 @@ var shimSource []byte
 type Process struct {
 	MetricsFile string
 	cmd         *exec.Cmd
+	stderr      io.Writer
 	urlCh       chan string
 	started     chan struct{}
 	startErr    error
 	exit        chan struct{}
+	stderrErr   chan error
 	waitOnce    sync.Once
 	tempDir     string
 }
 
 // NewProcess builds the run command for the target program.
-func NewProcess(ctx context.Context, sourceDir string) (process *Process, err error) {
+func NewProcess(ctx context.Context, sourceDir string, buildArgs, runArgs []string, output adapters.Output) (process *Process, err error) {
 	sourceDir, err = filepath.Abs(sourceDir)
 	if err != nil {
 		return nil, err
@@ -70,24 +73,34 @@ func NewProcess(ctx context.Context, sourceDir string) (process *Process, err er
 	}
 	metricsFile := filepath.Join(tempDir, "metrics.ndjson")
 
-	cmd := exec.CommandContext(ctx, "node",
-		"--inspect="+inspectAddr,
+	args := []string{
+		"--inspect=" + inspectAddr,
 		"--require", shimPath,
-		entry,
-	)
+	}
+	// Node has no build phase; build arguments are runtime flags.
+	args = append(args, buildArgs...)
+	args = append(args, entry)
+	args = append(args, runArgs...)
+	cmd := exec.CommandContext(ctx, "node", args...)
 	cmd.Dir = sourceDir
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = output.Stdout
 	cmd.Env = append(os.Environ(),
 		metricsFileEnv+"="+metricsFile,
 		metricsIntervalMs+"=100",
 	)
 
+	stderr := output.Stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
 	return &Process{
 		MetricsFile: metricsFile,
 		cmd:         cmd,
+		stderr:      stderr,
 		urlCh:       make(chan string, 1),
 		started:     make(chan struct{}),
 		exit:        make(chan struct{}),
+		stderrErr:   make(chan error, 1),
 		tempDir:     tempDir,
 	}, nil
 }
@@ -104,7 +117,9 @@ func (p *Process) Start() error {
 		return err
 	}
 	close(p.started)
-	go p.scanStderr(stderr)
+	go func() {
+		p.stderrErr <- p.scanStderr(stderr)
+	}()
 	return nil
 }
 
@@ -124,7 +139,7 @@ func (p *Process) Wait() error {
 	if p.startErr != nil {
 		return p.startErr
 	}
-	err := p.cmd.Wait()
+	err := errors.Join(p.cmd.Wait(), <-p.stderrErr)
 	p.waitOnce.Do(func() { close(p.exit) })
 	return err
 }
@@ -154,17 +169,28 @@ func (p *Process) Cleanup() error {
 }
 
 // scanStderr forwards target output and extracts the inspector URL.
-func (p *Process) scanStderr(stderr io.ReadCloser) {
-	scanner := bufio.NewScanner(stderr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if index := strings.Index(line, "ws://"); index >= 0 {
-			select {
-			case p.urlCh <- strings.TrimSpace(line[index:]):
-			default:
+func (p *Process) scanStderr(stderr io.ReadCloser) error {
+	reader := bufio.NewReader(stderr)
+	var forwardErr error
+	for {
+		line, err := reader.ReadString('\n')
+		if line != "" {
+			if index := strings.Index(line, "ws://"); index >= 0 {
+				select {
+				case p.urlCh <- strings.TrimSpace(line[index:]):
+				default:
+				}
+			}
+			if forwardErr == nil {
+				_, forwardErr = io.WriteString(p.stderr, line)
 			}
 		}
-		fmt.Fprintln(os.Stderr, line)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return forwardErr
+			}
+			return errors.Join(forwardErr, err)
+		}
 	}
 }
 
