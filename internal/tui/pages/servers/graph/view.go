@@ -240,9 +240,10 @@ func (m *Model) buildLabelView(selected, hovered, dragging int, focused []bool) 
 				end++
 			}
 			style := mutedStyle
-			if rowClasses[start] == 1 {
+			switch rowClasses[start] {
+			case 1:
 				style = normalStyle
-			} else if rowClasses[start] == 2 {
+			case 2:
 				style = hotStyle
 			}
 			output.WriteString(style.Render(string(row[start:end])))
@@ -288,9 +289,10 @@ func (r *renderer) renderImage(request *renderRequest, canvas *image.Paletted) {
 
 func (r *renderer) drawEdgeClass(canvas *image.Paletted, request *renderRequest, class int, opacity float64) {
 	indexes := &r.palette.idle
-	if class == 1 {
+	switch class {
+	case 1:
 		indexes = &r.palette.active
-	} else if class == 2 {
+	case 2:
 		indexes = &r.palette.hot
 	}
 	for _, edge := range request.edges {
@@ -328,9 +330,10 @@ func edgeClass(request *renderRequest, edge edgeModel) int {
 
 func (r *renderer) drawNodeClass(canvas *image.Paletted, request *renderRequest, class int, radiusOffset, opacity float64) {
 	indexes := &r.palette.idle
-	if class == 1 {
+	switch class {
+	case 1:
 		indexes = &r.palette.active
-	} else if class == 2 {
+	case 2:
 		indexes = &r.palette.hot
 	}
 	for index := range request.nodes {

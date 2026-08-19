@@ -195,7 +195,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			&m.style.Value, &m.style.CPU, &m.style.Memory,
 			&m.style.Column, &m.style.Component, &m.style.Separator,
 		} {
-			*style = style.Background(msg.Color).ColorWhitespace(true)
+			*style = style.Background(msg.Color)
 		}
 	case tea.KeyPressMsg:
 		switch msg.String() {

@@ -28,7 +28,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			&m.style.Help.ShortKey, &m.style.Help.ShortDesc, &m.style.Help.ShortSeparator,
 			&m.style.Help.FullKey, &m.style.Help.FullDesc, &m.style.Help.FullSeparator,
 		} {
-			*style = style.Background(msg.Color).ColorWhitespace(true)
+			*style = style.Background(msg.Color)
 		}
 		m.help.Styles = m.style.Help
 	case tea.KeyPressMsg:
