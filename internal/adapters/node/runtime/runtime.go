@@ -3,16 +3,13 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/briheet/sen/internal/adapters"
 	"github.com/briheet/sen/internal/adapters/node/runtime/cdp"
 	"github.com/briheet/sen/internal/adapters/node/runtime/cpuprofile"
 	"github.com/briheet/sen/internal/adapters/node/runtime/process"
+	"github.com/briheet/sen/internal/adapters/processstats"
 	"github.com/briheet/sen/internal/model"
 )
 
@@ -28,8 +25,8 @@ type Runtime struct {
 	Profiles map[string]*model.Profile
 	Trace    *model.Trace
 
-	client *cdp.Client
-	offset int64
+	client  *cdp.Client
+	sampler *processstats.Sampler
 }
 
 var _ adapters.Runtime = (*Runtime)(nil)
@@ -68,6 +65,13 @@ func (r *Runtime) Start(ctx context.Context) error {
 		return err
 	}
 	r.client = client
+	sampler, err := processstats.New(ctx, r.Process.PID())
+	if err != nil {
+		_ = client.Close()
+		_ = r.Process.Stop()
+		return err
+	}
+	r.sampler = sampler
 	return nil
 }
 
@@ -103,8 +107,11 @@ func (r *Runtime) Collect(ctx context.Context) (model.Observation, error) {
 	}
 	r.Profiles[cpuProfile] = response.Profile.Profile()
 	r.Trace = response.Profile.Trace()
-	if metrics, ok := readMetrics(r.Process.MetricsFile, &r.offset); ok {
-		r.Metrics = metrics
+	if err := r.collectMetrics(ctx); err != nil {
+		return model.Observation{}, err
+	}
+	if r.sampler != nil {
+		r.Metrics.Process = r.sampler.Collect(ctx)
 	}
 	return model.Observation{Metrics: r.Metrics, Profiles: r.Profiles, Trace: r.Trace}, nil
 }
@@ -131,52 +138,45 @@ func (r *Runtime) Cleanup() error {
 	return r.Process.Cleanup()
 }
 
-// shimRow mirrors one line of the metrics shim output.
+// shimRow mirrors one runtime snapshot returned by the injected shim.
 type shimRow struct {
-	HeapUsed  uint64 `json:"heapUsed"`
-	HeapTotal uint64 `json:"heapTotal"`
-	RSS       uint64 `json:"rss"`
-	User      uint64 `json:"user"`
+	HeapUsed             uint64  `json:"heapUsed"`
+	HeapTotal            uint64  `json:"heapTotal"`
+	External             uint64  `json:"external"`
+	ArrayBuffers         uint64  `json:"arrayBuffers"`
+	EventLoopUtilization float64 `json:"eventLoopUtilization"`
+	EventLoopDelayMean   float64 `json:"eventLoopDelayMean"`
+	EventLoopDelayMax    float64 `json:"eventLoopDelayMax"`
+	EventLoopDelayP95    float64 `json:"eventLoopDelayP95"`
+	EventLoopDelayP99    float64 `json:"eventLoopDelayP99"`
+	ActiveResources      uint64  `json:"activeResources"`
 }
 
-// readMetrics reads appended metrics lines and returns the latest complete row.
-func readMetrics(path string, offset *int64) (*model.RuntimeMetrics, bool) {
-	info, err := os.Stat(path)
-	if err != nil || info.Size() <= *offset {
-		return nil, false
+// collectMetrics asks the target for one runtime snapshot.
+func (r *Runtime) collectMetrics(ctx context.Context) error {
+	var response struct {
+		Result struct {
+			Value shimRow `json:"value"`
+		} `json:"result"`
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, false
+	if err := r.client.Call(ctx, "Runtime.evaluate", map[string]any{
+		"expression":    "globalThis[Symbol.for('sen.metrics')]()",
+		"returnByValue": true,
+	}, &response); err != nil {
+		return err
 	}
-	defer func() { _ = file.Close() }()
-	if _, err := file.Seek(*offset, io.SeekStart); err != nil {
-		return nil, false
+	row := response.Result.Value
+	r.Metrics.Node = model.NodeMetrics{
+		HeapUsed:             row.HeapUsed,
+		HeapTotal:            row.HeapTotal,
+		External:             row.External,
+		ArrayBuffers:         row.ArrayBuffers,
+		EventLoopUtilization: row.EventLoopUtilization,
+		EventLoopDelayMean:   time.Duration(row.EventLoopDelayMean),
+		EventLoopDelayMax:    time.Duration(row.EventLoopDelayMax),
+		EventLoopDelayP95:    time.Duration(row.EventLoopDelayP95),
+		EventLoopDelayP99:    time.Duration(row.EventLoopDelayP99),
+		ActiveResources:      row.ActiveResources,
 	}
-	data := make([]byte, info.Size()-*offset)
-	n, err := io.ReadFull(file, data)
-	if err != nil && err != io.ErrUnexpectedEOF {
-		return nil, false
-	}
-	*offset += int64(n)
-
-	var latest model.RuntimeMetrics
-	found := false
-	for _, line := range strings.Split(string(data[:n]), "\n") {
-		var row shimRow
-		if json.Unmarshal([]byte(line), &row) != nil {
-			continue
-		}
-		latest = model.RuntimeMetrics{
-			LiveHeap:        row.HeapUsed,
-			HeapAlloc:       row.HeapTotal,
-			TotalRuntimeMem: row.RSS,
-			UserCPU:         float64(row.User) / 1e6,
-		}
-		found = true
-	}
-	if !found {
-		return nil, false
-	}
-	return &latest, true
+	return nil
 }

@@ -84,7 +84,6 @@ func parse(data []byte, projectDir string) (*model.StaticGraph, error) {
 		id := model.FileID(index + 1)
 		fileIDs[file.Path] = id
 		graph.Files[id] = &model.StaticFile{ID: id, Path: file.Path, Package: 1}
-		graph.Program.Files = append(graph.Program.Files, id)
 	}
 	for _, file := range helper.Files {
 		fileID := fileIDs[file.Path]

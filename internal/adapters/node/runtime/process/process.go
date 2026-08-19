@@ -20,10 +20,8 @@ import (
 )
 
 const (
-	tempDirPattern    = "sen-node-*"
-	metricsFileEnv    = "SEN_METRICS_FILE"
-	metricsIntervalMs = "SEN_METRICS_INTERVAL_MS"
-	inspectAddr       = "127.0.0.1:0"
+	tempDirPattern = "sen-node-*"
+	inspectAddr    = "127.0.0.1:0"
 )
 
 //go:embed shim.cjs
@@ -31,16 +29,15 @@ var shimSource []byte
 
 // Process handles the lifecycle of the target Node.js program.
 type Process struct {
-	MetricsFile string
-	cmd         *exec.Cmd
-	stderr      io.Writer
-	urlCh       chan string
-	started     chan struct{}
-	startErr    error
-	exit        chan struct{}
-	stderrErr   chan error
-	waitOnce    sync.Once
-	tempDir     string
+	cmd       *exec.Cmd
+	stderr    io.Writer
+	urlCh     chan string
+	started   chan struct{}
+	startErr  error
+	exit      chan struct{}
+	stderrErr chan error
+	waitOnce  sync.Once
+	tempDir   string
 }
 
 // NewProcess builds the run command for the target program.
@@ -71,8 +68,6 @@ func NewProcess(ctx context.Context, sourceDir string, buildArgs, runArgs []stri
 	if err != nil {
 		return nil, err
 	}
-	metricsFile := filepath.Join(tempDir, "metrics.ndjson")
-
 	args := []string{
 		"--inspect=" + inspectAddr,
 		"--require", shimPath,
@@ -84,24 +79,20 @@ func NewProcess(ctx context.Context, sourceDir string, buildArgs, runArgs []stri
 	cmd := exec.CommandContext(ctx, "node", args...)
 	cmd.Dir = sourceDir
 	cmd.Stdout = output.Stdout
-	cmd.Env = append(os.Environ(),
-		metricsFileEnv+"="+metricsFile,
-		metricsIntervalMs+"=100",
-	)
+	cmd.Env = os.Environ()
 
 	stderr := output.Stderr
 	if stderr == nil {
 		stderr = io.Discard
 	}
 	return &Process{
-		MetricsFile: metricsFile,
-		cmd:         cmd,
-		stderr:      stderr,
-		urlCh:       make(chan string, 1),
-		started:     make(chan struct{}),
-		exit:        make(chan struct{}),
-		stderrErr:   make(chan error, 1),
-		tempDir:     tempDir,
+		cmd:       cmd,
+		stderr:    stderr,
+		urlCh:     make(chan string, 1),
+		started:   make(chan struct{}),
+		exit:      make(chan struct{}),
+		stderrErr: make(chan error, 1),
+		tempDir:   tempDir,
 	}, nil
 }
 
@@ -121,6 +112,14 @@ func (p *Process) Start() error {
 		p.stderrErr <- p.scanStderr(stderr)
 	}()
 	return nil
+}
+
+// PID returns the running target's process identifier.
+func (p *Process) PID() int {
+	if p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
 }
 
 // WaitURL blocks until the inspector websocket URL is available.

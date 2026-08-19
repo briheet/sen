@@ -54,10 +54,32 @@ func init() {
 }
 
 func senCollectorMetrics(writer http.ResponseWriter, _ *http.Request) {
-	descriptions := runtimemetrics.All()
-	samples := make([]runtimemetrics.Sample, len(descriptions))
-	for index, description := range descriptions {
-		samples[index].Name = description.Name
+	names := [...]string{
+		"/cpu/classes/user:cpu-seconds",
+		"/cpu/classes/gc/total:cpu-seconds",
+		"/cpu/classes/gc/mark/assist:cpu-seconds",
+		"/gc/cycles/total:gc-cycles",
+		"/gc/heap/allocs:bytes",
+		"/gc/heap/allocs:objects",
+		"/gc/heap/live:bytes",
+		"/gc/heap/objects:objects",
+		"/gc/heap/goal:bytes",
+		"/gc/gomemlimit:bytes",
+		"/gc/gogc:percent",
+		"/memory/classes/total:bytes",
+		"/memory/classes/heap/stacks:bytes",
+		"/memory/classes/heap/released:bytes",
+		"/memory/classes/heap/free:bytes",
+		"/memory/classes/heap/unused:bytes",
+		"/sched/goroutines:goroutines",
+		"/sched/gomaxprocs:threads",
+		"/sched/latencies:seconds",
+		"/sched/pauses/total/gc:seconds",
+		"/sync/mutex/wait/total:seconds",
+	}
+	samples := make([]runtimemetrics.Sample, len(names))
+	for index, name := range names {
+		samples[index].Name = name
 	}
 	runtimemetrics.Read(samples)
 

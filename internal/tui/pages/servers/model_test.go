@@ -86,6 +86,7 @@ func TestServerSwitchesViewsFromPager(t *testing.T) {
 		},
 	}, nil)
 	page, _ := server.Update(pages.ViewportMsg{Width: 21, Height: 8, Visible: true})
+	require.Equal(t, 2, page.(Model).pager.TotalPages)
 	page, command := page.Update(tea.MouseClickMsg{X: 10, Y: 7, Button: tea.MouseLeft})
 
 	require.Equal(t, 0, page.(Model).pager.Page)
@@ -95,13 +96,35 @@ func TestServerSwitchesViewsFromPager(t *testing.T) {
 	require.Equal(t, 1, page.(Model).pager.Page)
 	require.Contains(t, page.(Model).View().Content, "main.go")
 	require.NotNil(t, command)
+}
 
-	page, command = page.Update(tea.MouseClickMsg{X: 13, Y: 7, Button: tea.MouseLeft})
-	require.Equal(t, 1, page.(Model).pager.Page)
-	require.Equal(t, 2, page.(Model).pending)
-	require.NotNil(t, command)
-	page, command = page.Update(switchGraphMsg{service: "api", page: 2})
-	require.Equal(t, 2, page.(Model).pager.Page)
-	require.Contains(t, page.(Model).View().Content, "main")
-	require.NotNil(t, command)
+func TestServerTogglesMetricsOverlay(t *testing.T) {
+	t.Setenv("TERM", "dumb")
+	static := &model.StaticGraph{
+		Root:  1,
+		Nodes: map[model.NodeID]*model.StaticNode{1: {ID: 1, Name: "main"}},
+	}
+	server := New(&engine.Engine{
+		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
+		Graph: &model.RuntimeGraph{
+			Static: static,
+			Nodes:  map[model.NodeID]*model.Node{1: {Static: static.Nodes[1]}},
+		},
+	}, nil)
+	page, _ := server.Update(pages.ViewportMsg{Width: 80, Height: 18, Visible: true})
+	revision := page.Revision()
+
+	page, _ = page.Update(tea.KeyPressMsg{Code: 'm', Mod: tea.ModShift, Text: "M"})
+	view := page.View().Content
+	require.Contains(t, view, "live heap")
+	require.Greater(t, page.Revision(), revision)
+
+	page, _ = page.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.NotContains(t, page.View().Content, "live heap")
+
+	page, _ = page.Update(tea.KeyPressMsg{Code: 'm', Mod: tea.ModShift, Text: "M"})
+	require.Contains(t, page.View().Content, "live heap")
+
+	page, _ = page.Update(tea.KeyPressMsg{Code: 'm', Mod: tea.ModShift, Text: "M"})
+	require.NotContains(t, page.View().Content, "live heap")
 }

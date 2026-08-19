@@ -46,16 +46,16 @@ func TestModelContainsBuiltEngines(t *testing.T) {
 	updatedModel := updated.(model)
 	view := updatedModel.View()
 	require.Contains(t, view.Content, "api")
-	require.Contains(t, view.Content, "sen 0.1.0")
+	require.Contains(t, view.Content, "sen")
 	require.Equal(t, 80, lipgloss.Width(view.Content))
 	require.Equal(t, 24, lipgloss.Height(view.Content))
 	require.True(t, view.AltScreen)
 	require.Equal(t, tea.MouseModeCellMotion, view.MouseMode)
-	require.Equal(t, 1, lipgloss.Height(updatedModel.header.View()))
-	require.Contains(t, view.Content, "╭")
+	require.Equal(t, 1, lipgloss.Height(updatedModel.statusbar.View()))
+	require.NotContains(t, view.Content, "╭")
 }
 
-func TestGraphBeginsDirectlyBelowHeader(t *testing.T) {
+func TestGraphRendersAboveStatusBar(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	static := &runtimeModel.StaticGraph{
 		Root:  1,
@@ -72,8 +72,8 @@ func TestGraphBeginsDirectlyBelowHeader(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	lines := strings.Split(updated.(model).View().Content, "\n")
-	require.Contains(t, lines[1], "api")
-	require.Contains(t, lines[2], "main")
+	require.Contains(t, lines[len(lines)-1], "api")
+	require.Contains(t, updated.(model).View().Content, "main")
 }
 
 func TestModelMapsKVEngine(t *testing.T) {

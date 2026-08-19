@@ -12,7 +12,10 @@ var (
 		return &ProfileUpdate{Totals: make(map[Metric]int64), Code: newCodeUpdate()}
 	}}
 	traceUpdates = sync.Pool{New: func() any {
-		return &TraceUpdate{Summary: newTraceSummary(), Code: newCodeUpdate()}
+		return &TraceUpdate{
+			Summary: newTraceSummary(), Code: newCodeUpdate(),
+			NodeEdges: make(map[NodeEdge]int64), FileEdges: make(map[FileEdge]int64),
+		}
 	}}
 	profileMaps = sync.Pool{New: func() any {
 		return make(map[string]*ProfileUpdate)
@@ -47,8 +50,8 @@ func acquireCodeMetrics() CodeMetrics {
 func copyMetrics(source *RuntimeMetrics) *RuntimeMetrics {
 	target := metricsUpdates.Get().(*RuntimeMetrics)
 	*target = *source
-	target.SchedulerLatency = copyHistogram(source.SchedulerLatency)
-	target.GCPauses = copyHistogram(source.GCPauses)
+	target.Go.SchedulerLatency = copyHistogram(source.Go.SchedulerLatency)
+	target.Go.GCPauses = copyHistogram(source.Go.GCPauses)
 	return target
 }
 
@@ -63,11 +66,11 @@ func copyHistogram(source *Histogram) *Histogram {
 }
 
 func assignMetrics(target, source *RuntimeMetrics) {
-	schedulerLatency := target.SchedulerLatency
-	gcPauses := target.GCPauses
+	schedulerLatency := target.Go.SchedulerLatency
+	gcPauses := target.Go.GCPauses
 	*target = *source
-	target.SchedulerLatency = assignHistogram(schedulerLatency, source.SchedulerLatency)
-	target.GCPauses = assignHistogram(gcPauses, source.GCPauses)
+	target.Go.SchedulerLatency = assignHistogram(schedulerLatency, source.Go.SchedulerLatency)
+	target.Go.GCPauses = assignHistogram(gcPauses, source.Go.GCPauses)
 }
 
 func assignHistogram(target, source *Histogram) *Histogram {
@@ -110,6 +113,8 @@ func releaseProfileUpdate(update *ProfileUpdate) {
 func releaseTraceUpdate(update *TraceUpdate) {
 	resetTraceSummary(&update.Summary)
 	releaseCodeUpdate(&update.Code)
+	resetMap(&update.NodeEdges)
+	resetMap(&update.FileEdges)
 	traceUpdates.Put(update)
 }
 
@@ -134,8 +139,8 @@ func releaseCodeMetrics(metrics CodeMetrics) {
 }
 
 func releaseMetrics(metrics *RuntimeMetrics) {
-	releaseHistogram(metrics.SchedulerLatency)
-	releaseHistogram(metrics.GCPauses)
+	releaseHistogram(metrics.Go.SchedulerLatency)
+	releaseHistogram(metrics.Go.GCPauses)
 	*metrics = RuntimeMetrics{}
 	metricsUpdates.Put(metrics)
 }

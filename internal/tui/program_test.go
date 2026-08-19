@@ -33,15 +33,17 @@ func TestProgramNavigatesPages(t *testing.T) {
 
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
 		return bytes.Contains(output, []byte("api")) &&
-			bytes.Contains(output, []byte("more"))
+			bytes.Contains(output, []byte("? help"))
 	})
 	tm.Send(tea.MouseClickMsg{X: 5, Y: 12, Button: tea.MouseLeft})
 	tm.Send(tea.MouseMotionMsg{X: 15, Y: 14, Button: tea.MouseLeft})
 	tm.Send(tea.MouseReleaseMsg{X: 15, Y: 14, Button: tea.MouseLeft})
 	tm.Type("?")
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
-		return bytes.Contains(output, []byte("less"))
+		return bytes.Contains(output, []byte("HELP")) &&
+			bytes.Contains(output, []byte("move graph"))
 	})
+	tm.Type("?")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyRight})
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
 		return bytes.Contains(output, []byte("cache (redis)"))
@@ -107,21 +109,16 @@ func TestProgramPaintsLabelsWhenSwitchingGraphKinds(t *testing.T) {
 
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
 		placement := bytes.LastIndex(output, []byte("a=p,z=-1"))
-		return placement >= 0 && bytes.Index(output, []byte("main")) < placement
+		main := bytes.Index(output, []byte("main"))
+		dependency := bytes.Index(output, []byte("http.Serve"))
+		return placement >= 0 && main >= 0 && dependency >= 0 && main < placement && dependency < placement
 	})
 
 	// The pager occupies the final row of the server viewport.
-	tm.Send(tea.MouseClickMsg{X: 29, Y: 17, Button: tea.MouseLeft})
+	tm.Send(tea.MouseClickMsg{X: 30, Y: 18, Button: tea.MouseLeft})
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
 		placement := bytes.LastIndex(output, []byte("a=p,z=-1"))
 		label := bytes.Index(output, []byte("main.go"))
-		return label >= 0 && placement > label
-	})
-
-	tm.Send(tea.MouseClickMsg{X: 32, Y: 17, Button: tea.MouseLeft})
-	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
-		placement := bytes.LastIndex(output, []byte("a=p,z=-1"))
-		label := bytes.Index(output, []byte("http.Serve"))
 		return label >= 0 && placement > label
 	})
 }

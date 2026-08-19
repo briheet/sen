@@ -26,45 +26,59 @@ func Read(reader io.Reader) (*RuntimeMetrics, error) {
 	for _, sample := range samples {
 		switch sample.Name {
 		case MetricsUserCPU:
-			result.UserCPU = sample.Float64
+			result.Go.UserCPU = sample.Float64
 		case MetricsGCCPU:
-			result.GCCPU = sample.Float64
+			result.Go.GCCPU = sample.Float64
+		case MetricsGCAssist:
+			result.Go.GCAssist = sample.Float64
 		case MetricsGCCycles:
-			result.GCCycles = sample.Uint64
+			result.Go.GCCycles = sample.Uint64
 		case MetricsHeapAlloc:
-			result.HeapAlloc = sample.Uint64
+			result.Go.AllocatedBytes = sample.Uint64
 		case MetricsAllocCount:
-			result.AllocCount = sample.Uint64
+			result.Go.Allocations = sample.Uint64
 		case MetricsLiveHeap:
-			result.LiveHeap = sample.Uint64
+			result.Go.LiveHeap = sample.Uint64
 		case MetricsCurrHeapObjects:
-			result.CurrHeapObjects = sample.Uint64
+			result.Go.HeapObjects = sample.Uint64
+		case MetricsHeapGoal:
+			result.Go.HeapGoal = sample.Uint64
+		case MetricsMemoryLimit:
+			result.Go.MemoryLimit = sample.Uint64
+		case MetricsGOGC:
+			result.Go.GOGC = sample.Uint64
 		case MetricsTotalRuntimeMem:
-			result.TotalRuntimeMem = sample.Uint64
+			result.Go.RuntimeMemory = sample.Uint64
 		case MetricsStackMemory:
-			result.StackMemory = sample.Uint64
+			result.Go.StackMemory = sample.Uint64
+		case MetricsHeapReleased:
+			result.Go.HeapReleased = sample.Uint64
+		case MetricsHeapFree:
+			result.Go.HeapFree = sample.Uint64
+		case MetricsHeapUnused:
+			result.Go.HeapUnused = sample.Uint64
 		case MetricsTotalLiveGoroutines:
-			result.TotalLiveGoroutines = sample.Uint64
-		case MetricsRunningGoroutines:
-			result.RunningGoroutines = sample.Uint64
-		case MetricsRunnableGoroutines:
-			result.RunnableGoroutines = sample.Uint64
-		case MetricsWaitingGoroutines:
-			result.WaitingGoroutines = sample.Uint64
-		case MetricsThreads:
-			result.Threads = sample.Uint64
+			result.Go.Goroutines = sample.Uint64
+		case MetricsGOMAXPROCS:
+			result.Go.GOMAXPROCS = sample.Uint64
 		case MetricsSchedulerLatency:
-			result.SchedulerLatency = &model.Histogram{
+			if sample.Histogram == nil {
+				continue
+			}
+			result.Go.SchedulerLatency = &model.Histogram{
 				Counts:  append([]uint64(nil), sample.Histogram.Counts...),
 				Buckets: append([]float64(nil), sample.Histogram.Buckets...),
 			}
 		case MetricsGCPauses:
-			result.GCPauses = &model.Histogram{
+			if sample.Histogram == nil {
+				continue
+			}
+			result.Go.GCPauses = &model.Histogram{
 				Counts:  append([]uint64(nil), sample.Histogram.Counts...),
 				Buckets: append([]float64(nil), sample.Histogram.Buckets...),
 			}
 		case MetricsLockContention:
-			result.LockContention = sample.Float64
+			result.Go.MutexWait = sample.Float64
 		}
 	}
 	return result, nil

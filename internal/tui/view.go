@@ -16,24 +16,26 @@ func (m *model) refreshView() {
 		view = page.View()
 	}
 
-	width := max(0, m.width-2)
-	border := lipgloss.RoundedBorder()
-	header := lipgloss.NewStyle().
-		Width(width).
-		Align(lipgloss.Center).
-		Render(m.header.View())
-	footer := lipgloss.NewStyle().
-		Width(width).
-		Align(lipgloss.Center).
-		Render(m.footer.View())
+	width := max(0, m.width)
+	bodyHeight := max(0, m.height-1)
+	body := lipgloss.NewStyle().Width(width).Height(bodyHeight).Render(view.Content)
+	if panel := m.statusbar.HelpView(); panel != "" {
+		canvas := lipgloss.NewCanvas(width, bodyHeight)
+		canvas.Compose(lipgloss.NewCompositor(
+			lipgloss.NewLayer(body),
+			lipgloss.NewLayer(panel).
+				X(max(0, (width-lipgloss.Width(panel))/2)).
+				Y(max(0, (bodyHeight-lipgloss.Height(panel))/2)),
+		))
+		body = canvas.Render()
+	}
+	bar := m.statusbar.View()
 
 	// Pages own the remaining viewport; Kitty pixels are placed behind this text.
-	layout := lipgloss.JoinVertical(lipgloss.Left, header, view.Content, footer)
+	layout := lipgloss.JoinVertical(lipgloss.Left, body, bar)
 	view.Content = lipgloss.NewStyle().
 		Width(m.width).
 		Height(m.height).
-		Border(border).
-		BorderForeground(m.activeTheme.Border).
 		Render(layout)
 	view.AltScreen = true
 	view.WindowTitle = "sen"

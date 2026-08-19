@@ -1,23 +1,31 @@
-// Embedded metrics shim. Run via node --require.
-const fs = require('fs');
+// Embedded metrics shim. Sen reads this snapshot through the Node inspector.
+const { performance, monitorEventLoopDelay } = require('node:perf_hooks');
 
-const file = process.env.SEN_METRICS_FILE;
-const intervalMs = Number(process.env.SEN_METRICS_INTERVAL_MS || 100);
+const delay = monitorEventLoopDelay({ resolution: 20 });
+let previousUtilization = performance.eventLoopUtilization();
+delay.enable();
 
-if (!file) return;
-
-function sample() {
-  const mem = process.memoryUsage();
-  const cpu = process.cpuUsage();
-  fs.appendFileSync(file, JSON.stringify({
-    heapUsed: mem.heapUsed,
-    heapTotal: mem.heapTotal,
-    rss: mem.rss,
-    user: cpu.user,
-    system: cpu.system,
-  }) + '\n');
-}
-
-sample();
-setInterval(sample, intervalMs);
-process.on('exit', sample);
+Object.defineProperty(globalThis, Symbol.for('sen.metrics'), {
+  value() {
+    const memory = process.memoryUsage();
+    const utilization = performance.eventLoopUtilization(previousUtilization);
+    previousUtilization = performance.eventLoopUtilization();
+    const finite = value => Number.isFinite(value) ? value : 0;
+    const result = {
+      heapUsed: memory.heapUsed,
+      heapTotal: memory.heapTotal,
+      external: memory.external,
+      arrayBuffers: memory.arrayBuffers,
+      eventLoopUtilization: utilization.utilization,
+      eventLoopDelayMean: finite(delay.mean),
+      eventLoopDelayMax: finite(delay.max),
+      eventLoopDelayP95: finite(delay.percentile(95)),
+      eventLoopDelayP99: finite(delay.percentile(99)),
+      activeResources: typeof process.getActiveResourcesInfo === 'function'
+        ? process.getActiveResourcesInfo().length
+        : 0,
+    };
+    delay.reset();
+    return result;
+  },
+});

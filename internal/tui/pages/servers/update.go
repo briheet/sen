@@ -2,10 +2,15 @@
 package servers
 
 import (
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/briheet/sen/internal/tui/pages"
+	"github.com/briheet/sen/internal/tui/pages/servers/graph"
+	"github.com/briheet/sen/internal/tui/pages/servers/metrics"
 )
+
+var toggleMetrics = key.NewBinding(key.WithKeys("M", "shift+m"))
 
 // switchGraphMsg selects a graph after the previous Kitty image is removed.
 type switchGraphMsg struct {
@@ -15,7 +20,8 @@ type switchGraphMsg struct {
 
 // Init starts commands required by the server page.
 func (m Model) Init() tea.Cmd {
-	commands := make([]tea.Cmd, 0, len(m.graphs))
+	commands := make([]tea.Cmd, 0, len(m.graphs)+1)
+	commands = append(commands, m.metrics.Init())
 	for index := range m.graphs {
 		if command := m.graphs[index].Init(); command != nil {
 			commands = append(commands, command)
@@ -26,6 +32,72 @@ func (m Model) Init() tea.Cmd {
 
 // Update handles messages for the server page.
 func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
+	if _, ok := msg.(tea.BackgroundColorMsg); ok {
+		m.metrics, _ = m.metrics.Update(msg)
+		m.revision++
+	}
+	if obscured, ok := msg.(pages.ObscuredMsg); ok {
+		m.obscured = obscured.Obscured
+		commands := make([]tea.Cmd, 0, len(m.graphs))
+		for index := range m.graphs {
+			obscured.Obscured = m.obscured || (m.showMetrics && index == m.pager.Page)
+			var command tea.Cmd
+			m.graphs[index], command = m.graphs[index].Update(obscured)
+			if command != nil {
+				commands = append(commands, command)
+			}
+		}
+		m.revision++
+		return m, tea.Batch(commands...)
+	}
+	if tick, ok := msg.(pages.TelemetryTickMsg); ok {
+		revision := m.Engine.Revision()
+		if revision == m.telemetry {
+			return m, nil
+		}
+		snapshot := m.Engine.Snapshot()
+		m.telemetry = revision
+		m.metrics.ApplySnapshot(snapshot.Metrics, tick.At)
+		m.revision++
+		commands := make([]tea.Cmd, 0, len(m.graphs))
+		for index := range m.graphs {
+			var command tea.Cmd
+			m.graphs[index], command = m.graphs[index].Update(graph.TelemetryMsg{
+				Nodes:     snapshot.NodeActivity,
+				Files:     snapshot.FileActivity,
+				NodeEdges: snapshot.NodeEdges,
+				FileEdges: snapshot.FileEdges,
+			})
+			if command != nil {
+				commands = append(commands, command)
+			}
+		}
+		return m, tea.Batch(commands...)
+	}
+	if press, ok := msg.(tea.KeyPressMsg); ok && key.Matches(press, toggleMetrics) {
+		m.showMetrics = !m.showMetrics
+		m.revision++
+		var command tea.Cmd
+		m.graphs[m.pager.Page], command = m.graphs[m.pager.Page].Update(pages.ObscuredMsg{Obscured: m.showMetrics || m.obscured})
+		return m, command
+	}
+	if m.showMetrics {
+		if press, ok := msg.(tea.KeyPressMsg); ok && press.Code == tea.KeyEscape {
+			m.showMetrics = false
+			m.revision++
+			var command tea.Cmd
+			m.graphs[m.pager.Page], command = m.graphs[m.pager.Page].Update(pages.ObscuredMsg{Obscured: m.obscured})
+			return m, command
+		}
+		switch msg.(type) {
+		case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
+			return m, nil
+		case tea.KeyPressMsg:
+			m.metrics, _ = m.metrics.Update(msg)
+			m.revision++
+			return m, nil
+		}
+	}
 	if change, ok := msg.(switchGraphMsg); ok {
 		if change.service != m.Name() || change.page != m.pending {
 			return m, nil
@@ -46,6 +118,8 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 		m.viewport = viewport
 		m.width = max(0, viewport.Width)
 		m.height = max(0, viewport.Height)
+		panelWidth, panelHeight := metrics.Size(m.width, max(0, m.height-1))
+		m.metrics, _ = m.metrics.Update(tea.WindowSizeMsg{Width: panelWidth, Height: panelHeight})
 		commands := make([]tea.Cmd, 0, len(m.graphs))
 		for index := range m.graphs {
 			graphViewport := viewport
@@ -90,7 +164,7 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 	}
 	m.pager, _ = m.pager.Update(msg)
 	switch msg.(type) {
-	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
 		var command tea.Cmd
 		m.graphs[m.pager.Page], command = m.graphs[m.pager.Page].Update(msg)
 		return m, command

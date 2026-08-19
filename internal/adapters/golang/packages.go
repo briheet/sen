@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/types"
+	"slices"
 	"strings"
 
 	"github.com/briheet/sen/internal/adapters"
@@ -71,29 +72,60 @@ func (e *PackageErrors) Error() string {
 	return b.String()
 }
 
-// This function helps with setting required config, loading source info
+// LoadPackages loads typed syntax for the service's local import closure.
 func LoadPackages(ctx context.Context, sourcePath string, buildArgs []string) ([]*packages.Package, error) {
-	// Build config and loading packages
-	pkgConfig := packages.Config{
-		Mode:       packages.LoadAllSyntax | packages.NeedModule,
+	// Discover the local import closure without parsing dependency source.
+	metadataConfig := packages.Config{
+		Mode:       packages.LoadImports | packages.NeedDeps | packages.NeedModule,
 		Context:    ctx,
 		Dir:        sourcePath,
 		BuildFlags: buildArgs,
 	}
-
-	// Pattern resolves to Config.Dir's source dir
-	pkgs, err := packages.Load(&pkgConfig, currentDirectory)
+	metadata, err := packages.Load(&metadataConfig, currentDirectory)
 	if err != nil {
 		return nil, err
 	}
-	if len(pkgs) == 0 || pkgs[0].Module == nil {
+	if len(metadata) == 0 || metadata[0].Module == nil {
 		return nil, errors.New("source package has no module metadata")
 	}
 
-	// Temp struct for package loading errors
+	rootPath := metadata[0].PkgPath
+	modulePath := metadata[0].Module.Path
+	paths := make([]string, 0, len(metadata))
+	packages.Visit(metadata, nil, func(pkg *packages.Package) {
+		if pkg.Module != nil && pkg.Module.Path == modulePath {
+			paths = append(paths, pkg.PkgPath)
+		}
+	})
+	slices.Sort(paths)
+	paths = slices.Compact(paths)
+
+	// Parse and type-check project packages; imports use compiler export data.
+	syntaxConfig := packages.Config{
+		Mode:       packages.LoadSyntax | packages.NeedModule,
+		Context:    ctx,
+		Dir:        sourcePath,
+		BuildFlags: buildArgs,
+	}
+	pkgs, err := packages.Load(&syntaxConfig, paths...)
+	if err != nil {
+		return nil, err
+	}
+	if len(pkgs) == 0 {
+		return nil, errors.New("source package was not loaded")
+	}
+	slices.SortFunc(pkgs, func(left, right *packages.Package) int {
+		if left.PkgPath == rootPath && right.PkgPath != rootPath {
+			return -1
+		}
+		if right.PkgPath == rootPath && left.PkgPath != rootPath {
+			return 1
+		}
+		return strings.Compare(left.PkgPath, right.PkgPath)
+	})
+
 	var pkgErrors PackageErrors
 	for _, pkg := range pkgs {
-		// For any package, analyze Errors and Type Errors
 		if len(pkg.Errors) > 0 || len(pkg.TypeErrors) > 0 {
 			pkgErrors.Packages = append(pkgErrors.Packages, PackageError{
 				Package:    pkg.PkgPath,
@@ -103,9 +135,13 @@ func LoadPackages(ctx context.Context, sourcePath string, buildArgs []string) ([
 		}
 	}
 
-	// Return if errors were found out
 	if len(pkgErrors.Packages) > 0 {
 		return nil, &pkgErrors
+	}
+	for _, pkg := range pkgs {
+		if pkg.Types == nil || pkg.IllTyped {
+			return nil, errors.New("source package is not well typed")
+		}
 	}
 
 	return pkgs, nil

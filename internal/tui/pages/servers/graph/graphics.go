@@ -2,13 +2,13 @@ package graph
 
 import (
 	"bytes"
+	"math"
 	"os"
 	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"golang.org/x/sys/unix"
 )
@@ -65,14 +65,22 @@ func (m *Model) upload() tea.Cmd {
 	for index := range m.nodes {
 		m.nodes[index].rendered = m.nodes[index].position
 	}
-	buffer := snapshotNodes(m.nodes)
+	m.renderedCamera = m.camera
+	m.renderedDrag = m.dragging
+	m.renderedSelect = m.selected
+	m.renderedHover = m.hovered
+	m.renderHash = m.visualHash()
+	buffer := snapshotGraph(m.nodes, m.edges)
 	m.renderer.submit(renderRequest{
 		nodes:           buffer.nodes,
+		edges:           buffer.edges,
 		buffer:          buffer,
 		sequence:        m.renderSequence,
 		imageID:         imageID,
 		previousImageID: m.frontImageID,
 		dragging:        m.dragging,
+		selected:        m.selected,
+		hovered:         m.hovered,
 		width:           m.width,
 		height:          m.height,
 		originX:         m.originX,
@@ -80,32 +88,105 @@ func (m *Model) upload() tea.Cmd {
 		cellWidth:       m.cellWidth,
 		cellHeight:      m.cellHeight,
 		nodeRadius:      m.nodeRadius,
+		camera:          m.camera,
+		obscured:        m.obscured,
 		quiet:           quiet,
 		done:            done,
 	})
 	m.renderPending = true
+	m.dirty = false
 	m.renderErr = nil
 	return renderCommand(done, m.owner)
 }
 
-func writeChunks(output *bytes.Buffer, payload []byte, options *kitty.Options) {
-	for offset := 0; offset < len(payload); offset += kitty.MaxChunkSize {
-		end := min(offset+kitty.MaxChunkSize, len(payload))
-		var values []string
-		if offset == 0 {
-			values = options.Options()
-		} else if options.Quiet > 0 {
-			values = []string{"q=" + strconv.Itoa(int(options.Quiet))}
-		}
-		if len(payload) > kitty.MaxChunkSize {
-			continuation := "m=1"
-			if end == len(payload) {
-				continuation = "m=0"
-			}
-			values = append(values, continuation)
-		}
-		output.WriteString(ansi.KittyGraphics(payload[offset:end], values...))
+// visualHash quantizes positions to quarter pixels before comparing frames.
+func (m *Model) visualHash() uint64 {
+	const (
+		offset = uint64(14695981039346656037)
+		prime  = uint64(1099511628211)
+	)
+	hash := offset
+	mix := func(value uint64) { hash = (hash ^ value) * prime }
+	obscured := 0
+	if m.obscured {
+		obscured = 1
 	}
+	for _, value := range [...]int{m.width, m.height, m.cellWidth, m.cellHeight, m.dragging, m.selected, m.hovered, obscured} {
+		mix(uint64(int64(value)))
+	}
+	for index := range m.nodes {
+		node := &m.nodes[index]
+		position := m.camera.worldToScreen(node.position)
+		mix(uint64(int64(math.Round(position.x * 4))))
+		mix(uint64(int64(math.Round(position.y * 4))))
+	}
+	return hash
+}
+
+// kittyChunkWriter streams base64 output without retaining a second payload.
+type kittyChunkWriter struct {
+	output  *bytes.Buffer
+	options *kitty.Options
+	chunk   [kitty.MaxChunkSize]byte
+	length  int
+	wrote   bool
+}
+
+func (w *kittyChunkWriter) reset(output *bytes.Buffer, options *kitty.Options) {
+	w.output, w.options = output, options
+	w.length = 0
+	w.wrote = false
+}
+
+func (w *kittyChunkWriter) Write(payload []byte) (int, error) {
+	written := len(payload)
+	for len(payload) > 0 {
+		if w.length == len(w.chunk) {
+			w.flush(true)
+		}
+		count := copy(w.chunk[w.length:], payload)
+		w.length += count
+		payload = payload[count:]
+	}
+	return written, nil
+}
+
+func (w *kittyChunkWriter) close() {
+	if w.length > 0 {
+		w.flush(false)
+	}
+}
+
+func (w *kittyChunkWriter) flush(more bool) {
+	var values []string
+	if !w.wrote {
+		values = w.options.Options()
+	} else if w.options.Quiet > 0 {
+		values = []string{"q=" + strconv.Itoa(int(w.options.Quiet))}
+	}
+	if more {
+		values = append(values, "m=1")
+	} else if w.wrote {
+		values = append(values, "m=0")
+	}
+	writeKittyCommand(w.output, w.chunk[:w.length], values)
+	w.length = 0
+	w.wrote = true
+}
+
+func writeKittyCommand(output *bytes.Buffer, payload []byte, options []string) {
+	output.WriteString("\x1b_G")
+	for index, option := range options {
+		if index > 0 {
+			output.WriteByte(',')
+		}
+		output.WriteString(option)
+	}
+	if len(payload) > 0 {
+		output.WriteByte(';')
+		_, _ = output.Write(payload)
+	}
+	output.WriteString("\x1b\\")
 }
 
 func centeredMessage(width, height int, message string) string {

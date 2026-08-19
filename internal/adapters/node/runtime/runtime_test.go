@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/briheet/sen/internal/adapters"
+	"github.com/briheet/sen/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +46,13 @@ func TestCollect(t *testing.T) {
 	observation, err := runtime.Collect(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, observation.Profiles["cpu"].Samples)
-	require.Positive(t, observation.Metrics.LiveHeap)
+	require.Positive(t, observation.Metrics.Node.HeapUsed)
+	require.Positive(t, observation.Metrics.Node.External)
+	require.Positive(t, observation.Metrics.Node.EventLoopDelayP99)
+	require.GreaterOrEqual(t, observation.Metrics.Node.EventLoopUtilization, 0.0)
+	require.Positive(t, observation.Metrics.Node.ActiveResources)
+	require.True(t, observation.Metrics.Process.Has(model.ProcessCPU))
+	require.True(t, observation.Metrics.Process.Has(model.ProcessMemory))
 	require.NotEmpty(t, observation.Trace.Events)
 
 	require.NoError(t, runtime.Stop())

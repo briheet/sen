@@ -13,6 +13,10 @@ func OffsetMouse(msg tea.Msg, x, y int) tea.Msg {
 		msg.X -= x
 		msg.Y -= y
 		return msg
+	case tea.MouseWheelMsg:
+		msg.X -= x
+		msg.Y -= y
+		return msg
 	case tea.MouseReleaseMsg:
 		msg.X -= x
 		msg.Y -= y

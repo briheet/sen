@@ -9,9 +9,6 @@ type NodeID uint64
 // FileID uniquely identifies a source file within a static graph.
 type FileID uint64
 
-// BlockID identifies a basic block within its function.
-type BlockID uint64
-
 // SyntaxKind identifies the source syntax that defines a function node.
 type SyntaxKind uint8
 
@@ -20,8 +17,6 @@ const (
 	SyntaxFuncDecl SyntaxKind = iota
 	// SyntaxFuncLit represents an anonymous function literal.
 	SyntaxFuncLit
-	// SyntaxRange represents a synthetic function created for a range statement.
-	SyntaxRange
 )
 
 // StaticGraph is sen's language-neutral representation of analyzed code.
@@ -30,41 +25,19 @@ type StaticGraph struct {
 	Nodes    map[NodeID]*StaticNode
 	Files    map[FileID]*StaticFile
 	Packages map[PackageID]*Package
-	Program  Program
 }
 
-// StaticNode represents a function and its call and control-flow metadata.
+// StaticNode contains the source identity and relationships used at runtime.
 type StaticNode struct {
-	Name      string
-	ID        NodeID
-	Object    *ObjectFunc
-	Signature Signature
-	Synthetic string
-
-	Syntax    Syntax
-	Info      TypeInfo
-	GoVersion string
-
+	Name   string
+	ID     NodeID
+	Syntax Syntax
 	Parent *NodeID
 	Pkg    PackageID
 
 	Function FunctionBody
 	In       []NodeID
 	Out      []NodeID
-}
-
-// Program describes the files, packages, and method sets in the graph.
-type Program struct {
-	Files      []FileID
-	Packages   []PackageID
-	BuildMode  string
-	MethodSets []MethodSet
-}
-
-// MethodSet associates a runtime type with its reachable methods.
-type MethodSet struct {
-	Type    string
-	Methods []NodeID
 }
 
 // Syntax describes the source syntax that produced a function node.
@@ -79,29 +52,6 @@ type Syntax struct {
 type Position struct {
 	Line   int
 	Column int
-	Offset int
-}
-
-// ObjectFunc describes the source object behind a function.
-type ObjectFunc struct {
-	Name   string
-	Origin *ObjectFunc
-	Pkg    PackageID
-}
-
-// Signature describes a function or method signature.
-type Signature struct {
-	Receiver   string
-	Params     []Param
-	Results    []Param
-	Variadic   bool
-	TypeParams []string
-}
-
-// Param describes a named parameter or result.
-type Param struct {
-	Name string
-	Type string
 }
 
 // Package describes an analyzed source package.
@@ -110,70 +60,10 @@ type Package struct {
 	Name string
 }
 
-// TypeInfo contains type metadata associated with a node.
-type TypeInfo struct {
-	Type      string
-	Object    string
-	Package   string
-	Selection *Selection
-}
-
-// Selection describes a field or method selection.
-type Selection struct {
-	Kind     string
-	Receiver string
-	Object   string
-	Indirect bool
-	Index    []int
-}
-
-// FunctionBody contains a function's body and generic metadata.
+// FunctionBody contains relationships not represented by direct calls.
 type FunctionBody struct {
-	FreeVars   []Variable
-	Locals     []Variable
-	Blocks     []Block
-	Recover    *BlockID
 	AnonFuncs  []NodeID
 	References []NodeID
-
-	TypeArgs       []Type
-	RecvTypeParams []TypeParam
-	RecvTypeArgs   []Type
-
-	Origin *NodeID
-}
-
-// Variable describes a named variable and its type.
-type Variable struct {
-	Name string
-	Type string
-}
-
-// TypeParam describes a generic type parameter and its constraint.
-type TypeParam struct {
-	Name       string
-	Constraint string
-}
-
-// Type contains the string representation of a source type.
-type Type struct {
-	Name string
-}
-
-// Block represents a basic block and its control-flow edges.
-type Block struct {
-	ID           BlockID
-	Index        int
-	Comment      string
-	Instructions []Instruction
-	Pred         []BlockID
-	Succ         []BlockID
-}
-
-// Instruction describes an instruction and its source position.
-type Instruction struct {
-	Op       string
-	Position Position
 }
 
 // StaticFile describes a source file and its call relationships.

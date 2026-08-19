@@ -14,16 +14,33 @@ const (
 	unitNanoseconds = "nanoseconds"
 )
 
-// RuntimeGraph is the TUI-owned view of static and observed program data.
+// RuntimeGraph merges static analysis with the latest completed runtime window.
 type RuntimeGraph struct {
-	Static   *StaticGraph
-	Nodes    map[NodeID]*Node
-	Files    map[FileID]*File
-	Global   Global
-	Unmapped map[Metric]int64
+	Static    *StaticGraph
+	Nodes     map[NodeID]*Node
+	Files     map[FileID]*File
+	Global    Global
+	Unmapped  map[Metric]int64
+	NodeEdges map[NodeEdge]int64
+	FileEdges map[FileEdge]int64
 
 	mapper *frameMapper
 }
+
+// RuntimeSnapshot is an immutable view consumed by the TUI between collections.
+type RuntimeSnapshot struct {
+	Metrics      RuntimeMetrics
+	NodeActivity map[NodeID]int64
+	FileActivity map[FileID]int64
+	NodeEdges    map[NodeEdge]int64
+	FileEdges    map[FileEdge]int64
+}
+
+// NodeEdge is one caller-to-callee relationship observed in a trace stack.
+type NodeEdge struct{ From, To NodeID }
+
+// FileEdge is one source-file relationship observed in a trace stack.
+type FileEdge struct{ From, To FileID }
 
 // Node combines a static function node with its runtime costs.
 type Node struct {
@@ -93,8 +110,10 @@ type ProfileUpdate struct {
 
 // TraceUpdate contains one trace's global and source-attributed aggregates.
 type TraceUpdate struct {
-	Summary TraceSummary
-	Code    CodeUpdate
+	Summary   TraceSummary
+	Code      CodeUpdate
+	NodeEdges map[NodeEdge]int64
+	FileEdges map[FileEdge]int64
 }
 
 // CodeUpdate contains runtime costs grouped by static graph identity.
@@ -107,10 +126,12 @@ type CodeUpdate struct {
 // BuildRuntimeGraph allocates the main module's stable model owned by the TUI.
 func BuildRuntimeGraph(modulePath string, static *StaticGraph) *RuntimeGraph {
 	result := &RuntimeGraph{
-		Static:   static,
-		Nodes:    make(map[NodeID]*Node),
-		Files:    make(map[FileID]*File),
-		Unmapped: make(map[Metric]int64),
+		Static:    static,
+		Nodes:     make(map[NodeID]*Node),
+		Files:     make(map[FileID]*File),
+		Unmapped:  make(map[Metric]int64),
+		NodeEdges: make(map[NodeEdge]int64),
+		FileEdges: make(map[FileEdge]int64),
 		Global: Global{
 			ProfileTotals:    make(map[Metric]int64),
 			ProfileDurations: make(map[string]time.Duration),
@@ -136,7 +157,7 @@ func (g *RuntimeGraph) BuildUpdate(metrics *RuntimeMetrics, profiles map[string]
 	return update
 }
 
-// ApplyUpdate consumes an update and applies it to the TUI-owned graph.
+// ApplyUpdate consumes an update and applies it to the engine-owned graph.
 func (g *RuntimeGraph) ApplyUpdate(update RuntimeUpdate) {
 	if update.Reset {
 		g.resetRuntime()
@@ -163,9 +184,64 @@ func (g *RuntimeGraph) ApplyUpdate(update RuntimeUpdate) {
 			g.clearSource(TraceSource)
 		}
 		g.copyTrace(update.Trace.Summary)
+		clear(g.NodeEdges)
+		clear(g.FileEdges)
+		maps.Copy(g.NodeEdges, update.Trace.NodeEdges)
+		maps.Copy(g.FileEdges, update.Trace.FileEdges)
 		g.applyCode(update.Trace.Code, update.Reset)
 	}
 	releaseUpdate(update)
+}
+
+// Snapshot copies process metrics and trace activity without exposing graph maps.
+func (g *RuntimeGraph) Snapshot() RuntimeSnapshot {
+	result := RuntimeSnapshot{
+		Metrics:      cloneMetrics(g.Global.Process),
+		NodeActivity: make(map[NodeID]int64),
+		FileActivity: make(map[FileID]int64),
+		NodeEdges:    make(map[NodeEdge]int64, len(g.NodeEdges)),
+		FileEdges:    make(map[FileEdge]int64, len(g.FileEdges)),
+	}
+	for id, node := range g.Nodes {
+		if activity := traceActivity(node.Metrics); activity > 0 {
+			result.NodeActivity[id] = activity
+		}
+	}
+	for id, file := range g.Files {
+		if activity := traceActivity(file.Metrics); activity > 0 {
+			result.FileActivity[id] = activity
+		}
+	}
+	maps.Copy(result.NodeEdges, g.NodeEdges)
+	maps.Copy(result.FileEdges, g.FileEdges)
+	return result
+}
+
+func traceActivity(metrics CodeMetrics) int64 {
+	var activity int64
+	for metric, cost := range metrics {
+		if metric.Source == TraceSource {
+			activity += cost.Cumulative
+		}
+	}
+	return activity
+}
+
+func cloneMetrics(source RuntimeMetrics) RuntimeMetrics {
+	result := source
+	if source.Go.SchedulerLatency != nil {
+		result.Go.SchedulerLatency = &Histogram{
+			Counts:  append([]uint64(nil), source.Go.SchedulerLatency.Counts...),
+			Buckets: append([]float64(nil), source.Go.SchedulerLatency.Buckets...),
+		}
+	}
+	if source.Go.GCPauses != nil {
+		result.Go.GCPauses = &Histogram{
+			Counts:  append([]uint64(nil), source.Go.GCPauses.Counts...),
+			Buckets: append([]float64(nil), source.Go.GCPauses.Buckets...),
+		}
+	}
+	return result
 }
 
 func (g *RuntimeGraph) resetRuntime() {
@@ -176,6 +252,8 @@ func (g *RuntimeGraph) resetRuntime() {
 		clear(file.Metrics)
 	}
 	clear(g.Unmapped)
+	clear(g.NodeEdges)
+	clear(g.FileEdges)
 	clear(g.Global.ProfileTotals)
 	clear(g.Global.ProfileDurations)
 	g.copyTrace(newTraceSummary())

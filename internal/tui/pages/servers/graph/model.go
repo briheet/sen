@@ -9,21 +9,16 @@ import (
 	"path/filepath"
 	"slices"
 	"sync/atomic"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/briheet/sen/internal/model"
-	"github.com/charmbracelet/harmonica"
 )
 
 const (
-	framesPerSecond = 60
-	frequency       = 6.0
-	damping         = 1.0 // Critical damping returns nodes without oscillation.
-	maxVelocity     = 24.0
-	settleDistance  = 0.03
+	framesPerSecond = 30
 	maxImageID      = 1<<24 - 1
-	dependencyScale = 0.18
-	maximumScale    = 2.0
+	baseNodeRadius  = 6.0
 )
 
 var imageIDs atomic.Uint32
@@ -32,12 +27,10 @@ var imageIDs atomic.Uint32
 type Kind uint8
 
 const (
-	// FunctionGraph shows project functions and their call relationships.
+	// FunctionGraph shows project functions and their direct external calls.
 	FunctionGraph Kind = iota
 	// FileGraph collapses calls into source-file relationships.
 	FileGraph
-	// DependencyGraph sizes function nodes by direct connectivity.
-	DependencyGraph
 )
 
 type point struct {
@@ -46,20 +39,29 @@ type point struct {
 }
 
 type node struct {
-	label      string
-	anchor     point
-	position   point
-	rendered   point
-	velocity   point
-	id         uint64
-	scale      float64
-	depth      int
-	row        int
-	rowCount   int
-	labelX     int
-	labelY     int
-	labelCellX int
-	labelCellY int
+	label        string
+	position     point
+	rendered     point
+	velocity     point
+	id           uint64
+	scale        float64
+	degree       int
+	labelWidth   int
+	labelX       int
+	labelY       int
+	labelCellX   int
+	labelCellY   int
+	labelVisible bool
+	active       bool
+	fixed        bool
+}
+
+type labelScratch struct {
+	focused  []bool
+	occupied []bool
+	classes  []uint8
+	order    []int
+	cells    []rune
 }
 
 // Model contains the graph layout, motion, and drag state.
@@ -71,10 +73,16 @@ type Model struct {
 	labels         string
 	nodes          []node
 	edges          []edgeModel
-	forceBuffer    []point
-	spring         harmonica.Spring
+	simulation     simulation
+	camera         camera
+	renderedCamera camera
 	dragOffset     point
+	pressPoint     point
+	lastPointer    point
+	pressed        int
 	dragging       int
+	selected       int
+	hovered        int
 	height         int
 	width          int
 	cellHeight     int
@@ -82,24 +90,44 @@ type Model struct {
 	root           int
 	originX        int
 	originY        int
-	layoutFrames   int
 	generation     uint64
 	renderSequence uint64
+	renderHash     uint64
 	revision       uint64
 	frontImageID   uint32
 	imageIDs       [2]uint32
 	labelsDragging int
+	labelsSelected int
+	labelsHovered  int
+	renderedDrag   int
+	renderedSelect int
+	renderedHover  int
 	nodeRadius     float64
 	kind           Kind
 	graphics       bool
+	obscured       bool
 	animating      bool
+	panning        bool
+	pointerMoved   bool
 	visible        bool
 	renderPending  bool
+	dirty          bool
+	labelScratch   labelScratch
 }
 
 // New builds the selected graph from analyzed project code.
 func New(owner string, kind Kind, source *model.RuntimeGraph, dump io.Writer) Model {
 	nodes, edges, root := build(source, kind)
+	prepareNodes(nodes, edges, kind)
+	simulation := newSimulation(kind, nodes, edges, root)
+	simulation.settle(nodes, edges)
+	if kind == FunctionGraph && root >= 0 && root < len(nodes) {
+		anchor := nodes[root].position
+		for index := range nodes {
+			nodes[index].position.x -= anchor.x
+			nodes[index].position.y -= anchor.y
+		}
+	}
 	m := Model{
 		owner:          owner,
 		kind:           kind,
@@ -107,16 +135,24 @@ func New(owner string, kind Kind, source *model.RuntimeGraph, dump io.Writer) Mo
 		nodes:          nodes,
 		edges:          edges,
 		root:           root,
-		spring:         harmonica.NewSpring(harmonica.FPS(framesPerSecond), frequency, damping),
+		simulation:     simulation,
 		cellWidth:      fallbackCellWidth,
 		cellHeight:     fallbackCellHeight,
 		nodeRadius:     fallbackNodeRadius,
 		graphics:       supportsGraphics(),
 		imageIDs:       [2]uint32{nextImageID(), nextImageID()},
+		pressed:        -1,
 		dragging:       -1,
+		selected:       -1,
+		hovered:        -1,
 		labelsDragging: -2,
+		labelsSelected: -2,
+		labelsHovered:  -2,
+		renderedDrag:   -1,
+		renderedSelect: -1,
+		renderedHover:  -1,
 	}
-	m.renderer = newRenderer(owner, edges, dump)
+	m.renderer = newRenderer(owner, dump)
 	m.trace("initialized graphics=%t nodes=%d edges=%d term=%q term_program=%q kitty_window=%t",
 		m.graphics, len(nodes), len(edges), os.Getenv("TERM"), os.Getenv("TERM_PROGRAM"), os.Getenv("KITTY_WINDOW_ID") != "")
 	return m
@@ -132,10 +168,10 @@ func build(source *model.RuntimeGraph, kind Kind) ([]node, []edgeModel, int) {
 	if kind == FileGraph {
 		return buildFiles(source)
 	}
-	return buildFunctions(source, kind == DependencyGraph)
+	return buildFunctions(source)
 }
 
-func buildFunctions(source *model.RuntimeGraph, dependencies bool) ([]node, []edgeModel, int) {
+func buildFunctions(source *model.RuntimeGraph) ([]node, []edgeModel, int) {
 	if source == nil || source.Static == nil {
 		return nil, nil, -1
 	}
@@ -152,25 +188,23 @@ func buildFunctions(source *model.RuntimeGraph, dependencies bool) ([]node, []ed
 	}
 
 	ids := append([]model.NodeID(nil), localIDs...)
-	if dependencies {
-		seen := make(map[model.NodeID]struct{}, len(localIDs))
-		for _, id := range localIDs {
-			seen[id] = struct{}{}
-		}
-		for _, id := range localIDs {
-			function := source.Nodes[id].Static
-			for _, targets := range [][]model.NodeID{function.Out, function.Function.References, function.Function.AnonFuncs} {
-				for _, target := range targets {
-					if _, exists := seen[target]; exists || source.Static.Nodes[target] == nil {
-						continue
-					}
-					seen[target] = struct{}{}
-					ids = append(ids, target)
+	seen := make(map[model.NodeID]struct{}, len(localIDs))
+	for _, id := range localIDs {
+		seen[id] = struct{}{}
+	}
+	for _, id := range localIDs {
+		function := source.Nodes[id].Static
+		for _, targets := range [][]model.NodeID{function.Out, function.Function.References, function.Function.AnonFuncs} {
+			for _, target := range targets {
+				if _, exists := seen[target]; exists || source.Static.Nodes[target] == nil {
+					continue
 				}
+				seen[target] = struct{}{}
+				ids = append(ids, target)
 			}
 		}
-		slices.Sort(ids)
 	}
+	slices.Sort(ids)
 
 	indices := make(map[model.NodeID]int, len(ids))
 	names := make(map[string]int, len(ids))
@@ -182,7 +216,7 @@ func buildFunctions(source *model.RuntimeGraph, dependencies bool) ([]node, []ed
 	for index, id := range ids {
 		static := source.Static.Nodes[id]
 		label := functionLabel(source.Static, static, names[static.Name] > 1)
-		if _, local := source.Nodes[id]; dependencies && !local {
+		if _, local := source.Nodes[id]; !local {
 			label = dependencyLabel(source.Static, static, names[static.Name] > 1)
 		}
 		nodes[index] = node{id: uint64(id), label: label, scale: 1}
@@ -206,11 +240,7 @@ func buildFunctions(source *model.RuntimeGraph, dependencies bool) ([]node, []ed
 		}
 	}
 	edges = normalizeEdges(edges)
-	if dependencies {
-		scaleDependencies(nodes, edges)
-	}
 	root := graphRoot(source, localIDs, indices)
-	assignDepths(nodes, edges, root)
 	return nodes, edges, root
 }
 
@@ -261,7 +291,6 @@ func buildFiles(source *model.RuntimeGraph) ([]node, []edgeModel, int) {
 	}
 	edges = normalizeEdges(edges)
 	root := fileRoot(source, ids, indices, edges)
-	assignDepths(nodes, edges, root)
 	return nodes, edges, root
 }
 
@@ -277,16 +306,21 @@ func normalizeEdges(edges []edgeModel) []edgeModel {
 	})
 }
 
-func scaleDependencies(nodes []node, edges []edgeModel) {
-	degrees := make([]int, len(nodes))
+func prepareNodes(nodes []node, edges []edgeModel, kind Kind) {
 	for _, edge := range edges {
-		if edge.from != edge.to {
-			degrees[edge.from]++
-			degrees[edge.to]++
+		if edge.from == edge.to {
+			continue
 		}
+		nodes[edge.from].degree++
+		nodes[edge.to].degree++
 	}
 	for index := range nodes {
-		nodes[index].scale = min(maximumScale, 1+math.Sqrt(float64(degrees[index]))*dependencyScale)
+		strength := 0.12
+		if kind == FunctionGraph {
+			strength = 0.18
+		}
+		nodes[index].scale = min(1.8, 1+math.Sqrt(float64(nodes[index].degree))*strength)
+		nodes[index].labelWidth = utf8.RuneCountInString(nodes[index].label)
 	}
 }
 
@@ -374,53 +408,6 @@ func fileRoot(source *model.RuntimeGraph, ids []model.FileID, indices map[model.
 		}
 	}
 	return 0
-}
-
-func assignDepths(nodes []node, edges []edgeModel, root int) {
-	// Edges are sorted by source, so offsets provide adjacency without slices per node.
-	offsets := make([]int, len(nodes)+1)
-	for _, edge := range edges {
-		offsets[edge.from+1]++
-	}
-	for index := 1; index < len(offsets); index++ {
-		offsets[index] += offsets[index-1]
-	}
-	for index := range nodes {
-		nodes[index].depth = -1
-	}
-	queue := make([]int, 0, len(nodes))
-	walk := func(start, depth int) {
-		queue = append(queue[:0], start)
-		nodes[start].depth = depth
-		for head := 0; head < len(queue); head++ {
-			from := queue[head]
-			for _, edge := range edges[offsets[from]:offsets[from+1]] {
-				if nodes[edge.to].depth < 0 {
-					nodes[edge.to].depth = nodes[from].depth + 1
-					queue = append(queue, edge.to)
-				}
-			}
-		}
-	}
-	walk(root, 0)
-	for index := range nodes {
-		if nodes[index].depth < 0 {
-			walk(index, 1)
-		}
-	}
-
-	rows := make([]int, 2*(len(nodes)+1))
-	counts := rows[:len(nodes)+1]
-	rows = rows[len(nodes)+1:]
-	for _, node := range nodes {
-		counts[node.depth]++
-	}
-	for index := range nodes {
-		depth := nodes[index].depth
-		nodes[index].row = rows[depth]
-		nodes[index].rowCount = counts[depth]
-		rows[depth]++
-	}
 }
 
 func (m Model) trace(format string, values ...any) {

@@ -77,7 +77,7 @@ func TestBuildRuntimeGraph(t *testing.T) {
 			{At: 35, Kind: EventStateTransition, Goroutine: 1, Processor: 0, Thread: 10, Resource: Resource{Kind: ResourceGoroutine, ID: 1}, From: StateRunnable, To: StateNotExist},
 		},
 	}
-	metrics := &RuntimeMetrics{UserCPU: 1.25}
+	metrics := &RuntimeMetrics{Go: GoMetrics{UserCPU: 1.25}}
 	profiles := map[string]*Profile{"cpu": profile}
 
 	result := BuildRuntimeGraph("example.com/app", static)
@@ -85,9 +85,9 @@ func TestBuildRuntimeGraph(t *testing.T) {
 	require.Len(t, result.Nodes, 3)
 	require.NotContains(t, result.Files, FileID(3))
 	require.NotContains(t, result.Nodes, NodeID(4))
-	require.Zero(t, result.Global.Process.UserCPU)
+	require.Zero(t, result.Global.Process.Go.UserCPU)
 	result.ApplyUpdate(result.BuildUpdate(metrics, profiles, observedTrace))
-	require.Equal(t, 1.25, result.Global.Process.UserCPU)
+	require.Equal(t, 1.25, result.Global.Process.Go.UserCPU)
 
 	profileCount := Metric{Source: "cpu", Name: "samples", Unit: "count"}
 	profileCPU := Metric{Source: "cpu", Name: "cpu", Unit: "nanoseconds"}
@@ -109,6 +109,8 @@ func TestBuildRuntimeGraph(t *testing.T) {
 	require.Equal(t, Cost{Self: 10, Cumulative: 10}, result.Nodes[2].Metrics[traceRunnable])
 	require.Equal(t, Cost{Self: 20, Cumulative: 20}, result.Nodes[2].Metrics[traceWaiting])
 	require.Equal(t, Cost{Cumulative: 20}, result.Nodes[3].Metrics[traceWaiting])
+	require.Positive(t, result.NodeEdges[NodeEdge{From: 1, To: 2}])
+	require.Positive(t, result.FileEdges[FileEdge{From: 2, To: 1}])
 
 	summary := result.Global.Trace
 	require.Equal(t, 40*time.Nanosecond, summary.Duration)
@@ -127,11 +129,24 @@ func TestBuildRuntimeGraph(t *testing.T) {
 	require.Equal(t, uint64(42), summary.Metrics["/gc/heap/goal:bytes"])
 
 	node := result.Nodes[2]
-	result.ApplyUpdate(result.BuildUpdate(&RuntimeMetrics{UserCPU: 2.5}, nil, nil))
+	result.ApplyUpdate(result.BuildUpdate(&RuntimeMetrics{Go: GoMetrics{UserCPU: 2.5}}, nil, nil))
 	require.Same(t, node, result.Nodes[2])
 	require.Empty(t, result.Nodes[2].Metrics)
 	require.Empty(t, result.Global.ProfileTotals)
 	require.Empty(t, result.Unmapped)
 	require.Zero(t, result.Global.Trace.Duration)
-	require.Equal(t, 2.5, result.Global.Process.UserCPU)
+	require.Equal(t, 2.5, result.Global.Process.Go.UserCPU)
+}
+
+func TestTraceEdgesFollowCallerToCalleeOrder(t *testing.T) {
+	nodes := make(map[NodeEdge]int64)
+	files := make(map[FileEdge]int64)
+	addNodeTraceEdges(nodes, []NodeID{3, 2, 1})
+	addFileTraceEdges(files, []FileID{2, 1})
+
+	require.Equal(t, map[NodeEdge]int64{
+		{From: 1, To: 2}: 1,
+		{From: 2, To: 3}: 1,
+	}, nodes)
+	require.Equal(t, map[FileEdge]int64{{From: 1, To: 2}: 1}, files)
 }

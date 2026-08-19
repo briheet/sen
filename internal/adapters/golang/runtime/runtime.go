@@ -16,6 +16,7 @@ import (
 	runtimepprof "github.com/briheet/sen/internal/adapters/golang/runtime/pprof"
 	runtimeprocess "github.com/briheet/sen/internal/adapters/golang/runtime/process"
 	runtimetrace "github.com/briheet/sen/internal/adapters/golang/runtime/trace"
+	"github.com/briheet/sen/internal/adapters/processstats"
 	"github.com/briheet/sen/internal/model"
 )
 
@@ -26,7 +27,8 @@ type Runtime struct {
 	Profiles map[string]*runtimepprof.Profile
 	Trace    *runtimetrace.Trace
 
-	client *http.Client
+	client  *http.Client
+	sampler *processstats.Sampler
 }
 
 var _ adapters.Runtime = (*Runtime)(nil)
@@ -59,8 +61,17 @@ func NewRuntime(ctx context.Context, sourceDir string, buildArgs, runArgs []stri
 }
 
 // Start launches the instrumented target.
-func (r *Runtime) Start(context.Context) error {
-	return r.Process.Start()
+func (r *Runtime) Start(ctx context.Context) error {
+	if err := r.Process.Start(); err != nil {
+		return err
+	}
+	sampler, err := processstats.New(ctx, r.Process.PID())
+	if err != nil {
+		_ = r.Process.Stop()
+		return err
+	}
+	r.sampler = sampler
+	return nil
 }
 
 // Collect captures one complete runtime snapshot.
@@ -78,16 +89,14 @@ func (r *Runtime) Collect(ctx context.Context) (model.Observation, error) {
 		}
 	}
 
-	results := make(chan error, 2)
-	go func() { results <- r.CollectProfile(ctx, cpuProfile, collectWindow) }()
-	go func() { results <- r.CollectTrace(ctx, collectWindow) }()
-	for range 2 {
-		if err := <-results; err != nil {
-			return model.Observation{}, err
-		}
+	if err := r.CollectTrace(ctx, collectWindow); err != nil {
+		return model.Observation{}, err
 	}
 	if err := r.CollectMetrics(ctx); err != nil {
 		return model.Observation{}, err
+	}
+	if r.sampler != nil {
+		r.Metrics.Process = r.sampler.Collect(ctx)
 	}
 	return model.Observation{Metrics: r.Metrics, Profiles: r.Profiles, Trace: r.Trace}, nil
 }

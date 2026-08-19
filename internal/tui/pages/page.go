@@ -22,3 +22,6 @@ type ViewportMsg struct {
 	Width, Height int
 	Visible       bool
 }
+
+// ObscuredMsg softens page visuals while a modal is shown above them.
+type ObscuredMsg struct{ Obscured bool }

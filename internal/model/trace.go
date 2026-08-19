@@ -73,6 +73,8 @@ func (g *RuntimeGraph) buildTrace(trace *Trace) *TraceUpdate {
 			update.Summary.StackSamples++
 			nodes, files := g.mapper.traceTargets(trace, event.Stack, targets)
 			update.Code.add(Metric{Source: TraceSource, Name: traceSamples, Unit: unitCount}, 1, nodes, files)
+			addNodeTraceEdges(update.NodeEdges, nodes)
+			addFileTraceEdges(update.FileEdges, files)
 		case EventRangeBegin, EventRangeActive:
 			workspace.ranges[rangeKey{kind: event.Resource.Kind, id: event.Resource.ID, name: event.Name}] = event.At
 		case EventRangeEnd:
@@ -143,6 +145,18 @@ func (g *RuntimeGraph) buildTrace(trace *Trace) *TraceUpdate {
 	return update
 }
 
+func addNodeTraceEdges(edges map[NodeEdge]int64, stack []NodeID) {
+	for index := len(stack) - 1; index > 0; index-- {
+		edges[NodeEdge{From: stack[index], To: stack[index-1]}]++
+	}
+}
+
+func addFileTraceEdges(edges map[FileEdge]int64, stack []FileID) {
+	for index := len(stack) - 1; index > 0; index-- {
+		edges[FileEdge{From: stack[index], To: stack[index-1]}]++
+	}
+}
+
 func (g *RuntimeGraph) closeGoroutineState(update *TraceUpdate, trace *Trace, state *resourceState, at time.Duration, targets *targetWorkspace) {
 	if at < state.since || state.state == StateUnknown || state.state == StateNotExist {
 		return
@@ -154,6 +168,8 @@ func (g *RuntimeGraph) closeGoroutineState(update *TraceUpdate, trace *Trace, st
 	}
 	nodes, files := g.mapper.traceTargets(trace, state.stack, targets)
 	update.Code.add(Metric{Source: TraceSource, Name: string(state.state), Unit: unitNanoseconds}, int64(duration), nodes, files)
+	addNodeTraceEdges(update.NodeEdges, nodes)
+	addFileTraceEdges(update.FileEdges, files)
 }
 
 func closeProcessorState(summary *TraceSummary, state *resourceState, at time.Duration) {

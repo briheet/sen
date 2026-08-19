@@ -15,29 +15,91 @@ type Histogram struct {
 	Buckets []float64
 }
 
-// RuntimeMetrics contains process-wide runtime measurements.
-type RuntimeMetrics struct {
+// ProcessMetric identifies an OS measurement available for a target process.
+type ProcessMetric uint16
+
+const (
+	ProcessCPU ProcessMetric = 1 << iota
+	ProcessMemory
+	ProcessThreads
+	ProcessOpenFiles
+	ProcessIO
+	ProcessIOOperations
+	ProcessContextSwitches
+	ProcessUptime
+)
+
+// ProcessMetrics contains language-independent operating-system measurements.
+type ProcessMetrics struct {
+	UserCPU   float64
+	SystemCPU float64
+	Uptime    time.Duration
+
+	RSS           uint64
+	PeakRSS       uint64
+	VirtualMemory uint64
+	ReadBytes     uint64
+	WriteBytes    uint64
+	ReadOps       uint64
+	WriteOps      uint64
+	VoluntaryCS   uint64
+	InvoluntaryCS uint64
+	Threads       uint64
+	OpenFiles     uint64
+
+	Available ProcessMetric
+}
+
+// Has reports whether a process measurement was collected on this platform.
+func (m ProcessMetrics) Has(metric ProcessMetric) bool { return m.Available&metric != 0 }
+
+// GoMetrics contains measurements exposed by the Go runtime.
+type GoMetrics struct {
 	UserCPU  float64
 	GCCPU    float64
+	GCAssist float64
 	GCCycles uint64
 
-	HeapAlloc       uint64
-	AllocCount      uint64
-	LiveHeap        uint64
-	CurrHeapObjects uint64
-
-	TotalRuntimeMem uint64
-	StackMemory     uint64
-
-	TotalLiveGoroutines uint64
-	RunningGoroutines   uint64
-	RunnableGoroutines  uint64
-	WaitingGoroutines   uint64
-	Threads             uint64
+	AllocatedBytes uint64
+	Allocations    uint64
+	LiveHeap       uint64
+	HeapObjects    uint64
+	HeapGoal       uint64
+	MemoryLimit    uint64
+	RuntimeMemory  uint64
+	StackMemory    uint64
+	HeapReleased   uint64
+	HeapFree       uint64
+	HeapUnused     uint64
+	GOGC           uint64
+	Goroutines     uint64
+	GOMAXPROCS     uint64
 
 	SchedulerLatency *Histogram
 	GCPauses         *Histogram
-	LockContention   float64
+	MutexWait        float64
+}
+
+// NodeMetrics contains measurements exposed by the Node.js runtime.
+type NodeMetrics struct {
+	HeapUsed     uint64
+	HeapTotal    uint64
+	External     uint64
+	ArrayBuffers uint64
+
+	EventLoopUtilization float64
+	EventLoopDelayMean   time.Duration
+	EventLoopDelayMax    time.Duration
+	EventLoopDelayP95    time.Duration
+	EventLoopDelayP99    time.Duration
+	ActiveResources      uint64
+}
+
+// RuntimeMetrics contains one normalized process and runtime snapshot.
+type RuntimeMetrics struct {
+	Process ProcessMetrics
+	Go      GoMetrics
+	Node    NodeMetrics
 }
 
 // EventKind identifies a runtime event.

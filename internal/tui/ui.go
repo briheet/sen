@@ -8,9 +8,8 @@ import (
 
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
-	"github.com/briheet/sen/internal/tui/components/footer"
-	"github.com/briheet/sen/internal/tui/components/header"
 	"github.com/briheet/sen/internal/tui/components/keys"
+	"github.com/briheet/sen/internal/tui/components/statusbar"
 	tuicontext "github.com/briheet/sen/internal/tui/context"
 	"github.com/briheet/sen/internal/tui/pages"
 	"github.com/briheet/sen/internal/tui/pages/kv"
@@ -57,11 +56,10 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 	keyMap := keys.NewModel()
 
 	m := model{
-		dump:   dump,
-		ctx:    ctx,
-		header: header.NewModel(ctx),
-		footer: footer.NewModel(keyMap, theme),
-		keys:   keyMap,
+		dump:      dump,
+		ctx:       ctx,
+		statusbar: statusbar.New(ctx, keyMap, theme),
+		keys:      keyMap,
 
 		activeTheme: theme,
 	}
@@ -71,7 +69,7 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 
 // Init starts every service page.
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, m.header.Init(), m.footer.Init(), m.initScreen())
+	return tea.Batch(tea.RequestBackgroundColor, pages.NextTelemetryTick(), m.statusbar.Init(), m.initScreen())
 }
 
 // initScreen initializes every page concurrently.

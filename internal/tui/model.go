@@ -4,9 +4,8 @@ import (
 	"io"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/briheet/sen/internal/tui/components/footer"
-	"github.com/briheet/sen/internal/tui/components/header"
 	"github.com/briheet/sen/internal/tui/components/keys"
+	"github.com/briheet/sen/internal/tui/components/statusbar"
 	"github.com/briheet/sen/internal/tui/context"
 
 	"github.com/briheet/sen/internal/tui/styles"
@@ -20,8 +19,7 @@ type model struct {
 	// program's context (metrics, business stuff)
 	ctx *context.ProgramContext
 
-	header header.Model // base header of the application
-	footer footer.Model // base footer of the application
+	statusbar statusbar.Model // workspace navigation and help
 
 	// workspace wide keys to work with
 	keys *keys.Model

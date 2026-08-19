@@ -89,6 +89,14 @@ func (p *Process) Start() error {
 	return p.startErr
 }
 
+// PID returns the running target's process identifier.
+func (p *Process) PID() int {
+	if p.RunCmd.Process == nil {
+		return 0
+	}
+	return p.RunCmd.Process.Pid
+}
+
 // Wait blocks until the target program exits.
 func (p *Process) Wait() error {
 	<-p.started

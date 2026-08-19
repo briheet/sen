@@ -3,6 +3,8 @@ package engine
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/briheet/sen/internal/adapters"
@@ -19,6 +21,9 @@ type Engine struct {
 	Service config.Service
 	Runtime adapters.Runtime
 	Graph   *model.RuntimeGraph
+
+	mu       sync.RWMutex
+	revision atomic.Uint64
 }
 
 // NewEngine resolves, analyzes, and opens a configured service.
@@ -52,8 +57,22 @@ func (e *Engine) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.Graph.ApplyUpdate(e.Graph.BuildUpdate(observation.Metrics, observation.Profiles, observation.Trace))
+	update := e.Graph.BuildUpdate(observation.Metrics, observation.Profiles, observation.Trace)
+	e.mu.Lock()
+	e.Graph.ApplyUpdate(update)
+	e.mu.Unlock()
+	e.revision.Add(1)
 	return nil
+}
+
+// Revision changes after each complete metrics, profile, and trace window.
+func (e *Engine) Revision() uint64 { return e.revision.Load() }
+
+// Snapshot returns the latest completed runtime window.
+func (e *Engine) Snapshot() model.RuntimeSnapshot {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.Graph.Snapshot()
 }
 
 // Wait blocks until the target exits.
@@ -71,9 +90,9 @@ func (e *Engine) Cleanup() error {
 	return e.Runtime.Cleanup()
 }
 
-// Run starts the target, collects one snapshot, and waits for exit.
+// Run continuously collects runtime windows until the target exits.
 func (e *Engine) Run() error {
-	ctx, cancel := context.WithTimeout(context.Background(), collectionTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := e.Start(ctx); err != nil {
 		return err
@@ -81,18 +100,31 @@ func (e *Engine) Run() error {
 
 	done := make(chan error, 1)
 	go func() { done <- e.Wait() }()
-	collected := make(chan error, 1)
-	go func() { collected <- e.Refresh(ctx) }()
+	for {
+		collected := make(chan error, 1)
+		go func() {
+			window, stop := context.WithTimeout(ctx, collectionTimeout)
+			defer stop()
+			collected <- e.Refresh(window)
+		}()
 
-	select {
-	case err := <-done:
-		return err
-	case err := <-collected:
-		if err != nil {
+		select {
+		case err := <-done:
+			cancel()
+			<-collected
+			return err
+		case err := <-collected:
+			if err == nil {
+				continue
+			}
+			select {
+			case exitErr := <-done:
+				return exitErr
+			default:
+			}
 			_ = e.Stop()
 			<-done
 			return err
 		}
-		return <-done
 	}
 }

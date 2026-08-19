@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/png"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/briheet/sen/internal/model"
 	"github.com/briheet/sen/internal/tui/pages"
+	"github.com/briheet/sen/internal/tui/styles"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
 )
@@ -22,18 +24,26 @@ import (
 func TestGraphBuildsProjectFunctionsAndCalls(t *testing.T) {
 	graph := New("api", FunctionGraph, testRuntimeGraph(), nil)
 
-	require.Equal(t, []uint64{1, 2, 3}, []uint64{
+	require.Equal(t, []uint64{1, 2, 3, 99}, []uint64{
 		graph.nodes[0].id,
 		graph.nodes[1].id,
 		graph.nodes[2].id,
+		graph.nodes[3].id,
 	})
-	require.Equal(t, []string{"main", "routes", "handler"}, []string{
+	require.Equal(t, []string{"main", "routes", "handler", "http.external"}, []string{
 		graph.nodes[0].label,
 		graph.nodes[1].label,
 		graph.nodes[2].label,
+		graph.nodes[3].label,
 	})
 	require.Equal(t, 0, graph.root)
-	require.Equal(t, []edgeModel{{from: 0, to: 1}, {from: 0, to: 2}, {from: 1, to: 2}}, graph.edges)
+	distance := layoutFor(FunctionGraph).linkDistance
+	require.Equal(t, []edgeModel{
+		{from: 0, to: 1, distance: distance},
+		{from: 0, to: 2, distance: distance},
+		{from: 0, to: 3, distance: distance},
+		{from: 1, to: 2, distance: distance},
+	}, graph.edges)
 }
 
 func TestGraphBuildsProjectFilesAndCalls(t *testing.T) {
@@ -41,17 +51,17 @@ func TestGraphBuildsProjectFilesAndCalls(t *testing.T) {
 
 	require.Equal(t, []uint64{1, 2}, []uint64{graph.nodes[0].id, graph.nodes[1].id})
 	require.Equal(t, []string{"main.go", "handlers.go"}, []string{graph.nodes[0].label, graph.nodes[1].label})
-	require.Equal(t, []edgeModel{{from: 0, to: 1}}, graph.edges)
+	require.Equal(t, []edgeModel{{from: 0, to: 1, distance: 96}}, graph.edges)
 	require.Equal(t, 0, graph.root)
 }
 
-func TestDependencyGraphScalesConnectedFunctions(t *testing.T) {
+func TestFunctionGraphScalesConnectedFunctions(t *testing.T) {
 	source := testRuntimeGraph()
 	source.Static.Nodes[4] = &model.StaticNode{ID: 4, Name: "health", Syntax: model.Syntax{File: 2}}
 	source.Static.Nodes[1].Out = append(source.Static.Nodes[1].Out, 4)
 	source.Static.Files[2].Functions = append(source.Static.Files[2].Functions, 4)
 	source.Nodes[4] = &model.Node{Static: source.Static.Nodes[4]}
-	graph := New("api", DependencyGraph, source, nil)
+	graph := New("api", FunctionGraph, source, nil)
 
 	require.Contains(t, []uint64{graph.nodes[0].id, graph.nodes[1].id, graph.nodes[2].id, graph.nodes[3].id, graph.nodes[4].id}, uint64(99))
 	require.Equal(t, "http.external", graph.nodes[4].label)
@@ -60,6 +70,23 @@ func TestDependencyGraphScalesConnectedFunctions(t *testing.T) {
 		require.GreaterOrEqual(t, node.scale, 1.0)
 		require.LessOrEqual(t, node.scale, 2.0)
 	}
+}
+
+func TestTelemetryHighlightsObservedTracePath(t *testing.T) {
+	graph := New("api", FunctionGraph, testRuntimeGraph(), nil)
+	graph.graphics = false
+	graph, command := graph.Update(TelemetryMsg{
+		Nodes:     map[model.NodeID]int64{1: 4, 2: 2},
+		NodeEdges: map[model.NodeEdge]int64{{From: 1, To: 2}: 2},
+	})
+
+	require.Nil(t, command)
+	require.True(t, graph.nodes[0].active)
+	require.True(t, graph.nodes[1].active)
+	require.False(t, graph.nodes[2].active)
+	request := graphRenderRequest(graph)
+	require.Equal(t, 2, edgeClass(&request, graph.edges[0]))
+	require.Equal(t, 1, edgeClass(&request, graph.edges[1]))
 }
 
 func TestGraphDisambiguatesDuplicateFunctionNames(t *testing.T) {
@@ -74,7 +101,7 @@ func TestGraphDisambiguatesDuplicateFunctionNames(t *testing.T) {
 
 func TestGraphRendersNativeLabels(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	for _, kind := range []Kind{FunctionGraph, FileGraph, DependencyGraph} {
+	for _, kind := range []Kind{FunctionGraph, FileGraph} {
 		graph, command := New("api", kind, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 		view := graph.View()
 
@@ -100,26 +127,19 @@ func TestRasterCellSizeCapsWorkAndPreservesAspectRatio(t *testing.T) {
 	require.Equal(t, 20, height)
 }
 
-func TestGraphDistributesNodesAcrossViewport(t *testing.T) {
-	t.Setenv("TERM", "xterm-ghostty")
-	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+func TestGraphLayoutIsDeterministicAndUsesUniformLinks(t *testing.T) {
+	first := New("api", FunctionGraph, testRuntimeGraph(), nil)
+	second := New("api", FunctionGraph, testRuntimeGraph(), nil)
 
-	maximumDepth := 0
-	for _, node := range graph.nodes {
-		maximumDepth = max(maximumDepth, node.depth)
+	require.Equal(t, point{}, first.nodes[first.root].position)
+	require.False(t, first.nodes[first.root].fixed)
+	for index, node := range first.nodes {
+		require.Equal(t, second.nodes[index].position, node.position)
+		require.False(t, math.IsNaN(node.position.x))
+		require.False(t, math.IsNaN(node.position.y))
 	}
-	availableWidth := float64(graph.width - nodeWidth - int(graphInsetX))
-	availableHeight := float64(graph.height - 2 - int(graphInsetY))
-	for index, node := range graph.nodes {
-		if index == graph.root {
-			require.Equal(t, point{}, node.position)
-			continue
-		}
-		require.InDelta(t, availableWidth*float64(node.depth)/float64(maximumDepth), node.position.x, 0.001)
-		require.InDelta(t, availableHeight*float64(node.row+1)/float64(node.rowCount+1), node.position.y, 0.001)
-	}
-	for _, edge := range graph.edges {
-		require.Equal(t, max(baseEdgeLength, distance(graph.nodes[edge.from].position, graph.nodes[edge.to].position)), edge.rest)
+	for _, edge := range first.edges {
+		require.Equal(t, layoutFor(FunctionGraph).linkDistance, edge.distance)
 	}
 }
 
@@ -134,20 +154,20 @@ func TestGraphDistributesDenseLevelWithoutStacking(t *testing.T) {
 		static.Nodes[id] = &model.StaticNode{ID: id, Name: fmt.Sprintf("dependency-%d", id)}
 		static.Nodes[1].Out = append(static.Nodes[1].Out, id)
 	}
-	graph, _ := New("api", DependencyGraph, source, nil).Update(visibleViewport(176, 42))
+	graph, _ := New("api", FunctionGraph, source, nil).Update(visibleViewport(176, 42))
 
-	rows := make(map[int]struct{}, len(graph.nodes)-1)
-	for index, node := range graph.nodes {
-		if index != graph.root {
-			rows[int(math.Round(node.position.y))] = struct{}{}
-		}
+	positions := make(map[point]struct{}, len(graph.nodes))
+	for _, node := range graph.nodes {
+		require.False(t, math.IsNaN(node.position.x))
+		require.False(t, math.IsNaN(node.position.y))
+		positions[node.position] = struct{}{}
 	}
-	require.Len(t, rows, len(graph.nodes)-1)
+	require.Len(t, positions, len(graph.nodes))
 }
 
 func TestGraphTransmitsPNGForEveryGraphKind(t *testing.T) {
 	t.Setenv("TERM", "xterm-kitty")
-	for _, kind := range []Kind{FunctionGraph, FileGraph, DependencyGraph} {
+	for _, kind := range []Kind{FunctionGraph, FileGraph} {
 		graph, _ := New("api", kind, testRuntimeGraph(), nil).Update(pages.ViewportMsg{X: 3, Y: 4, Width: 40, Height: 10, Visible: true})
 		sequence := renderOutput(t, &graph)
 
@@ -163,7 +183,7 @@ func TestGraphTransmitsPNGForEveryGraphKind(t *testing.T) {
 
 func TestRenderedFramePreservesLabelsForEveryGraphKind(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
-	for _, kind := range []Kind{FunctionGraph, FileGraph, DependencyGraph} {
+	for _, kind := range []Kind{FunctionGraph, FileGraph} {
 		graph, _ := New("api", kind, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 		before := graph.View()
 		ready := graph.upload()().(renderReadyMsg)
@@ -183,7 +203,7 @@ func TestGraphDebugLogKeepsTerminalErrors(t *testing.T) {
 	output := renderOutput(t, &graph)
 
 	require.Contains(t, output, "q=1")
-	require.Contains(t, dump.String(), "nodes=3 edges=3")
+	require.Contains(t, dump.String(), "nodes=4 edges=4")
 	require.Contains(t, dump.String(), "frame ready")
 }
 
@@ -233,7 +253,9 @@ func TestLabelRevisionChangesOnlyAfterCrossingCell(t *testing.T) {
 	graph.refreshLabels(false)
 	require.Equal(t, revision, graph.Revision())
 
-	graph.nodes[1].position.x += 1
+	screen := graph.camera.worldToScreen(graph.nodes[1].position)
+	screen.x += float64(graph.cellWidth) * 2
+	graph.nodes[1].position = graph.camera.screenToWorld(screen)
 	graph.refreshLabels(false)
 	require.Greater(t, graph.Revision(), revision)
 }
@@ -249,8 +271,12 @@ func TestMovingLabelDoesNotRepositionOtherLabels(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
 	stationaryCell := graph.nodes[2].labelCellX
-	graph.nodes[1].position.x = float64(graph.nodes[1].labelCellX) + 0.8 - graphInsetX
-	graph.nodes[2].position.x = float64(stationaryCell) + 0.6 - graphInsetX
+	moving := graph.camera.worldToScreen(graph.nodes[1].position)
+	stationary := graph.camera.worldToScreen(graph.nodes[2].position)
+	moving.x += float64(graph.cellWidth)
+	stationary.x += float64(graph.cellWidth) * 0.6
+	graph.nodes[1].position = graph.camera.screenToWorld(moving)
+	graph.nodes[2].position = graph.camera.screenToWorld(stationary)
 
 	graph.refreshLabels(false)
 
@@ -284,18 +310,11 @@ func TestMovingLabelCommitsWithRenderedFrame(t *testing.T) {
 func TestGraphDrawsContinuousEdgesUnderNodes(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
-	canvas := graph.renderer.renderImage(renderRequest{
-		nodes:      graph.nodes,
-		dragging:   graph.dragging,
-		width:      graph.width,
-		height:     graph.height,
-		cellWidth:  graph.cellWidth,
-		cellHeight: graph.cellHeight,
-		nodeRadius: graph.nodeRadius,
-	})
+	request := graphRenderRequest(graph)
+	canvas := renderCanvas(graph.renderer, request)
 	edge := graph.edges[0]
-	from := pixelPoint(graph.nodes[edge.from].position, graph.cellWidth, graph.cellHeight)
-	to := pixelPoint(graph.nodes[edge.to].position, graph.cellWidth, graph.cellHeight)
+	from := graph.camera.worldToScreen(graph.nodes[edge.from].position)
+	to := graph.camera.worldToScreen(graph.nodes[edge.to].position)
 	middle := point{x: (from.x + to.x) / 2, y: (from.y + to.y) / 2}
 
 	edgePixels := 0
@@ -328,15 +347,7 @@ func TestGraphDrawsContinuousEdgesUnderNodes(t *testing.T) {
 func TestGraphUsesPalettedFrames(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
-	canvas := graph.renderer.renderImage(renderRequest{
-		nodes:      graph.nodes,
-		dragging:   graph.dragging,
-		width:      graph.width,
-		height:     graph.height,
-		cellWidth:  graph.cellWidth,
-		cellHeight: graph.cellHeight,
-		nodeRadius: graph.nodeRadius,
-	})
+	canvas := renderCanvas(graph.renderer, graphRenderRequest(graph))
 
 	require.Len(t, canvas.Palette, 1+3*alphaLevels)
 	require.Equal(t, canvas.Bounds().Dx()*canvas.Bounds().Dy(), len(canvas.Pix))
@@ -346,6 +357,81 @@ func TestGraphUsesPalettedFrames(t *testing.T) {
 	require.NoError(t, err)
 	_, paletted := configuration.ColorModel.(color.Palette)
 	require.True(t, paletted)
+}
+
+func TestDirectCapsulesStayContinuousAtEverySlope(t *testing.T) {
+	palette := newGraphPalette(styles.Zakura)
+	for _, segment := range [][2]point{
+		{{x: 5, y: 5}, {x: 70, y: 5}},
+		{{x: 5, y: 5}, {x: 5, y: 70}},
+		{{x: 5, y: 8}, {x: 70, y: 63}},
+		{{x: 8, y: 70}, {x: 63, y: 5}},
+	} {
+		canvas := image.NewPaletted(image.Rect(0, 0, 80, 80), palette.colors)
+		drawCapsule(canvas, &palette.active, segment[0], segment[1], edgeWidth, 1)
+		for step := range 101 {
+			ratio := float64(step) / 100
+			x := int(math.Round(segment[0].x + (segment[1].x-segment[0].x)*ratio))
+			y := int(math.Round(segment[0].y + (segment[1].y-segment[0].y)*ratio))
+			connected := false
+			for sampleY := y - 1; sampleY <= y+1 && !connected; sampleY++ {
+				for sampleX := x - 1; sampleX <= x+1; sampleX++ {
+					if pixelAlpha(canvas, sampleX, sampleY) != 0 {
+						connected = true
+						break
+					}
+				}
+			}
+			require.True(t, connected, "transparent gap at %.0f%% for %v", ratio*100, segment)
+		}
+	}
+}
+
+func TestKittyChunkWriterStreamsPayload(t *testing.T) {
+	payload := bytes.Repeat([]byte("a"), kitty.MaxChunkSize*2+17)
+	options := &kitty.Options{Action: kitty.Transmit, Format: kitty.PNG, Quiet: 2}
+	var output bytes.Buffer
+	var writer kittyChunkWriter
+	writer.reset(&output, options)
+
+	written, err := writer.Write(payload[:3000])
+	require.NoError(t, err)
+	require.Equal(t, 3000, written)
+	written, err = writer.Write(payload[3000:])
+	require.NoError(t, err)
+	require.Equal(t, len(payload)-3000, written)
+	writer.close()
+
+	require.Contains(t, output.String(), "m=1")
+	require.Contains(t, output.String(), "m=0")
+	require.Equal(t, payload, kittyPayload(output.String()))
+}
+
+func TestVisualHashIgnoresSubpixelMotion(t *testing.T) {
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	screen := point{x: 100, y: 100}
+	graph.nodes[1].position = graph.camera.screenToWorld(screen)
+	baseline := graph.visualHash()
+
+	screen.x += 0.1
+	graph.nodes[1].position = graph.camera.screenToWorld(screen)
+	require.Equal(t, baseline, graph.visualHash())
+
+	screen.x += 0.2
+	graph.nodes[1].position = graph.camera.screenToWorld(screen)
+	require.NotEqual(t, baseline, graph.visualHash())
+}
+
+func TestLabelScratchIsReused(t *testing.T) {
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	graph.refreshLabels(true)
+	cells := &graph.labelScratch.cells[0]
+	occupied := &graph.labelScratch.occupied[0]
+
+	graph.refreshLabels(true)
+
+	require.Equal(t, cells, &graph.labelScratch.cells[0])
+	require.Equal(t, occupied, &graph.labelScratch.occupied[0])
 }
 
 func TestGraphAppliesRenderBackpressure(t *testing.T) {
@@ -362,70 +448,84 @@ func TestGraphAppliesRenderBackpressure(t *testing.T) {
 }
 
 func pixelAlpha(canvas image.Image, x, y int) uint32 {
+	if !image.Pt(x, y).In(canvas.Bounds()) {
+		return 0
+	}
 	_, _, _, alpha := canvas.At(x, y).RGBA()
 	return alpha
 }
 
-func TestGraphSettlesAndPinsRoot(t *testing.T) {
+func TestGraphStartsWithRootAtOrigin(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	graph = settleLayout(graph)
 
 	require.False(t, graph.animating)
 	require.Equal(t, point{x: 0, y: 0}, graph.nodes[graph.root].position)
+	require.False(t, graph.nodes[graph.root].fixed)
 	for _, node := range graph.nodes {
-		require.Equal(t, node.anchor, node.position)
-		require.GreaterOrEqual(t, node.position.x, 0.0)
-		require.GreaterOrEqual(t, node.position.y, 0.0)
+		require.False(t, math.IsNaN(node.position.x))
+		require.False(t, math.IsNaN(node.position.y))
 	}
 }
 
-func TestRootCannotBeDragged(t *testing.T) {
+func TestRootCanBeDragged(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	graph = settleLayout(graph)
-	root := screenPoint(graph.nodes[graph.root].position)
-
-	graph, command := graph.Update(tea.MouseClickMsg{X: int(root.x), Y: int(root.y), Button: tea.MouseLeft})
-
+	root := mouseCell(graph, graph.nodes[graph.root].position)
+	graph, command := graph.Update(tea.MouseClickMsg{X: root[0], Y: root[1], Button: tea.MouseLeft})
 	require.Nil(t, command)
-	require.Equal(t, -1, graph.dragging)
-	require.Equal(t, point{x: 0, y: 0}, graph.nodes[graph.root].position)
+	graph, command = graph.Update(tea.MouseMotionMsg{X: root[0] + 5, Y: root[1] + 2, Button: tea.MouseLeft})
+
+	require.NotNil(t, command)
+	require.Equal(t, graph.root, graph.dragging)
+	require.NotEqual(t, point{}, graph.nodes[graph.root].position)
+
+	graph, _ = graph.Update(tea.MouseReleaseMsg{X: root[0] + 5, Y: root[1] + 2, Button: tea.MouseLeft})
+	dropped := graph.nodes[graph.root].position
+	for range 5 {
+		graph, _ = graph.Update(frameMsg{owner: "api", generation: graph.generation})
+	}
+	require.False(t, graph.nodes[graph.root].fixed)
+	require.NotEqual(t, dropped, graph.nodes[graph.root].position)
 }
 
-func TestDraggedNodeJigglesNeighborAndReturnsToAnchor(t *testing.T) {
+func TestDraggedNodeSettlesFromDroppedPosition(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	graph = settleLayout(graph)
 	dragged := 1
 	neighbor := 2
-	anchor := graph.nodes[dragged].anchor
+	original := graph.nodes[dragged].position
 	neighborBefore := graph.nodes[neighbor].position
-	target := screenPoint(graph.nodes[neighbor].position)
-	draggedPosition := screenPoint(graph.nodes[dragged].position)
+	draggedPosition := mouseCell(graph, graph.nodes[dragged].position)
+	target := [2]int{draggedPosition[0] + 10, draggedPosition[1] + 3}
 	click := tea.MouseClickMsg{
-		X:      int(math.Round(draggedPosition.x)),
-		Y:      int(math.Round(draggedPosition.y)),
+		X:      draggedPosition[0],
+		Y:      draggedPosition[1],
 		Button: tea.MouseLeft,
 	}
 
 	graph, command := graph.Update(click)
-	require.NotNil(t, command)
+	require.Nil(t, command)
+	graph, command = graph.Update(tea.MouseMotionMsg{X: target[0], Y: target[1], Button: tea.MouseLeft})
 	require.Equal(t, dragged, graph.dragging)
-	graph, command = graph.Update(tea.MouseMotionMsg{X: int(target.x), Y: int(target.y), Button: tea.MouseLeft})
-	require.Nil(t, command, "mouse events are rendered by the frame clock")
+	require.NotNil(t, command)
 	for range 5 {
 		graph, _ = graph.Update(frameMsg{owner: "api", generation: graph.generation})
 	}
 	require.NotEqual(t, neighborBefore, graph.nodes[neighbor].position)
 
-	graph, _ = graph.Update(tea.MouseReleaseMsg{X: int(target.x), Y: int(target.y), Button: tea.MouseLeft})
-	for frame := 0; frame < maximumReturnFrames+1 && graph.animating; frame++ {
+	graph, _ = graph.Update(tea.MouseReleaseMsg{X: target[0], Y: target[1], Button: tea.MouseLeft})
+	dropped := graph.nodes[dragged].position
+	for frame := 0; frame < maximumLayoutTicks+1 && graph.animating; frame++ {
 		graph, _ = graph.Update(frameMsg{owner: "api", generation: graph.generation})
 	}
 	require.False(t, graph.animating)
-	require.Equal(t, anchor, graph.nodes[dragged].position)
-	require.Equal(t, point{x: 0, y: 0}, graph.nodes[graph.root].position)
+	require.NotEqual(t, original, graph.nodes[dragged].position)
+	require.Less(t, distance(dropped, graph.nodes[dragged].position), distance(original, dropped))
+	require.False(t, graph.nodes[graph.root].fixed)
 }
 
 func TestResizePresettlesLayout(t *testing.T) {
@@ -433,14 +533,126 @@ func TestResizePresettlesLayout(t *testing.T) {
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
 	graph = settleLayout(graph)
 	generation := graph.generation
+	positions := make([]point, len(graph.nodes))
+	for index := range graph.nodes {
+		positions[index] = graph.nodes[index].position
+	}
 
 	graph, command := graph.Update(visibleViewport(100, 24))
 
 	require.NotNil(t, command)
 	require.Equal(t, generation, graph.generation)
 	require.Equal(t, point{x: 0, y: 0}, graph.nodes[graph.root].position)
+	for index, node := range graph.nodes {
+		require.Equal(t, positions[index], node.position)
+	}
+}
+
+func TestCameraZoomKeepsWorldPointUnderCursor(t *testing.T) {
+	graph, _ := New("api", FileGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	cursor := point{x: 120, y: 80}
+	before := graph.camera.screenToWorld(cursor)
+
+	graph.camera.zoomAt(cursor, zoomStep)
+
+	require.InDelta(t, before.x, graph.camera.screenToWorld(cursor).x, 0.001)
+	require.InDelta(t, before.y, graph.camera.screenToWorld(cursor).y, 0.001)
+	require.True(t, graph.camera.manual)
+}
+
+func TestGraphWheelZoomsAndResetFits(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	graph, _ := New("api", FileGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	initial := graph.camera.zoom
+
+	graph, command := graph.Update(tea.MouseWheelMsg{X: 20, Y: 8, Button: tea.MouseWheelUp})
+	require.NotNil(t, command)
+	require.Greater(t, graph.camera.zoom, initial)
+	require.True(t, graph.camera.manual)
+
+	graph.renderPending = false
+	graph, command = graph.Update(tea.KeyPressMsg{Code: '0'})
+	require.NotNil(t, command)
+	require.False(t, graph.camera.manual)
+}
+
+func TestClickSelectsNodeAndFocusesNeighbors(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	source := testRuntimeGraph()
+	source.Static.Nodes[4] = &model.StaticNode{ID: 4, Name: "unused", Syntax: model.Syntax{File: 2}}
+	source.Nodes[4] = &model.Node{Static: source.Static.Nodes[4]}
+	graph, _ := New("api", FunctionGraph, source, nil).Update(visibleViewport(80, 20))
+	cell := mouseCell(graph, graph.nodes[graph.root].position)
+
+	graph, _ = graph.Update(tea.MouseClickMsg{X: cell[0], Y: cell[1], Button: tea.MouseLeft})
+	graph, command := graph.Update(tea.MouseReleaseMsg{X: cell[0], Y: cell[1], Button: tea.MouseLeft})
+
+	require.NotNil(t, command)
+	require.Equal(t, graph.root, graph.selected)
+	unused := slices.IndexFunc(graph.nodes, func(node node) bool { return node.id == 4 })
+	require.GreaterOrEqual(t, unused, 0)
+	request := graphRenderRequest(graph)
+	renderer := newRenderer("test", nil)
+	renderer.classifyNodes(&request)
+	require.Equal(t, uint8(2), renderer.nodeClass[graph.root])
+	require.Zero(t, renderer.nodeClass[unused])
+
+	graph.renderPending = false
+	graph, command = graph.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.NotNil(t, command)
+	require.Equal(t, -1, graph.selected)
+}
+
+func TestEmptyCanvasDragPans(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	graph, _ := New("api", FileGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	empty := [2]int{-1, -1}
+	for y := 0; y < graph.height && empty[0] < 0; y++ {
+		for x := 0; x < graph.width; x++ {
+			if graph.hitNode(graph.mousePixel(x, y)) < 0 {
+				empty = [2]int{x, y}
+				break
+			}
+		}
+	}
+	require.GreaterOrEqual(t, empty[0], 0)
+	before := graph.camera.center
+
+	graph, _ = graph.Update(tea.MouseClickMsg{X: empty[0], Y: empty[1], Button: tea.MouseLeft})
+	graph, command := graph.Update(tea.MouseMotionMsg{X: empty[0] + 2, Y: empty[1] + 1, Button: tea.MouseLeft})
+
+	require.NotNil(t, command)
+	require.NotEqual(t, before, graph.camera.center)
+	require.True(t, graph.camera.manual)
+}
+
+func TestVisibleLabelsDoNotOverlap(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(30, 8))
+	occupied := make(map[int]struct{})
+
 	for _, node := range graph.nodes {
-		require.Equal(t, node.position, node.anchor)
+		if !node.labelVisible {
+			continue
+		}
+		for offset := range len([]rune(node.label)) {
+			cell := node.labelY*graph.width + node.labelX + offset
+			_, exists := occupied[cell]
+			require.False(t, exists)
+			occupied[cell] = struct{}{}
+		}
+	}
+}
+
+func TestBarnesHutLayoutProducesFinitePositions(t *testing.T) {
+	graph := New("api", FunctionGraph, linearRuntimeGraph(barnesHutThreshold+1), nil)
+
+	require.Len(t, graph.nodes, barnesHutThreshold+1)
+	for _, node := range graph.nodes {
+		require.False(t, math.IsNaN(node.position.x))
+		require.False(t, math.IsInf(node.position.x, 0))
+		require.False(t, math.IsNaN(node.position.y))
+		require.False(t, math.IsInf(node.position.y, 0))
 	}
 }
 
@@ -481,6 +693,43 @@ func TestGraphIgnoresFramesForAnotherServer(t *testing.T) {
 	require.Equal(t, before, graph.nodes[1].position)
 }
 
+func TestGraphObscuredStateMutesLabels(t *testing.T) {
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))
+	revision := graph.Revision()
+
+	graph, _ = graph.Update(pages.ObscuredMsg{Obscured: true})
+
+	require.True(t, graph.obscured)
+	require.Greater(t, graph.Revision(), revision)
+}
+
+func TestSoftenRenderSurfaceSpreadsAndDimsPixels(t *testing.T) {
+	palette := newGraphPalette(styles.Zakura)
+	canvas := image.NewPaletted(image.Rect(0, 0, 25, 25), palette.colors)
+	for y := 10; y < 15; y++ {
+		for x := 10; x < 15; x++ {
+			canvas.SetColorIndex(x, y, palette.hot[alphaLevels])
+		}
+	}
+	surface := &renderSurface{canvas: canvas}
+
+	softenRenderSurface(surface, &palette)
+
+	nonTransparent := 0
+	var peakAlpha uint32
+	for _, index := range canvas.Pix {
+		if index == 0 {
+			continue
+		}
+		nonTransparent++
+		_, _, _, alpha := canvas.Palette[index].RGBA()
+		peakAlpha = max(peakAlpha, alpha)
+		require.LessOrEqual(t, index, palette.idle[alphaLevels])
+	}
+	require.Greater(t, nonTransparent, 25)
+	require.Less(t, peakAlpha, uint32(0xffff))
+}
+
 func BenchmarkGraphUpload(b *testing.B) {
 	b.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
@@ -515,6 +764,18 @@ func BenchmarkGraphBuild(b *testing.B) {
 	}
 }
 
+func BenchmarkForceLayout(b *testing.B) {
+	for _, size := range []int{36, 256, 1000} {
+		source := linearRuntimeGraph(size)
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = New("api", FunctionGraph, source, nil)
+			}
+		})
+	}
+}
+
 func BenchmarkGraphView(b *testing.B) {
 	b.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
@@ -545,10 +806,55 @@ func renderOutput(tb testing.TB, graph *Model) string {
 }
 
 func settleLayout(graph Model) Model {
-	for frame := 0; frame < maximumReturnFrames+1 && graph.animating; frame++ {
+	for frame := 0; frame < maximumLayoutTicks+1 && graph.animating; frame++ {
 		graph, _ = graph.Update(frameMsg{owner: graph.owner, generation: graph.generation})
 	}
 	return graph
+}
+
+func graphRenderRequest(graph Model) renderRequest {
+	return renderRequest{
+		nodes:      graph.nodes,
+		edges:      graph.edges,
+		camera:     graph.camera,
+		dragging:   graph.dragging,
+		selected:   graph.selected,
+		hovered:    graph.hovered,
+		width:      graph.width,
+		height:     graph.height,
+		cellWidth:  graph.cellWidth,
+		cellHeight: graph.cellHeight,
+		nodeRadius: graph.nodeRadius,
+	}
+}
+
+func renderCanvas(renderer *renderer, request renderRequest) *image.Paletted {
+	bounds := image.Rect(0, 0, request.width*request.cellWidth, request.height*request.cellHeight)
+	canvas := image.NewPaletted(bounds, renderer.palette.colors)
+	renderer.renderImage(&request, canvas)
+	return canvas
+}
+
+func kittyPayload(sequence string) []byte {
+	var payload bytes.Buffer
+	for _, command := range strings.Split(sequence, "\x1b_G")[1:] {
+		end := strings.Index(command, "\x1b\\")
+		if end < 0 {
+			continue
+		}
+		if separator := strings.IndexByte(command[:end], ';'); separator >= 0 {
+			payload.WriteString(command[separator+1 : end])
+		}
+	}
+	return payload.Bytes()
+}
+
+func mouseCell(graph Model, world point) [2]int {
+	screen := graph.camera.worldToScreen(world)
+	return [2]int{
+		int(math.Floor(screen.x / float64(graph.cellWidth))),
+		int(math.Floor(screen.y / float64(graph.cellHeight))),
+	}
 }
 
 func testRuntimeGraph() *model.RuntimeGraph {
@@ -603,4 +909,18 @@ func testRuntimeGraph() *model.RuntimeGraph {
 			2: {Static: static.Files[2]},
 		},
 	}
+}
+
+func linearRuntimeGraph(size int) *model.RuntimeGraph {
+	static := &model.StaticGraph{Root: 1, Nodes: make(map[model.NodeID]*model.StaticNode, size)}
+	source := &model.RuntimeGraph{Static: static, Nodes: make(map[model.NodeID]*model.Node, size)}
+	for id := model.NodeID(1); id <= model.NodeID(size); id++ {
+		node := &model.StaticNode{ID: id, Name: fmt.Sprintf("function-%d", id)}
+		if id < model.NodeID(size) {
+			node.Out = []model.NodeID{id + 1}
+		}
+		static.Nodes[id] = node
+		source.Nodes[id] = &model.Node{Static: node}
+	}
+	return source
 }

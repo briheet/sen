@@ -26,6 +26,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case key.Matches(msg, m.KeyMap.SelectRight):
 			m.cursor = min(len(m.items)-1, m.cursor+1)
 		}
+	case tea.MouseClickMsg:
+		if m.focus && msg.Button == tea.MouseLeft && msg.Y == 0 {
+			if selected := m.itemAt(msg.X); selected >= 0 {
+				m.cursor = selected
+			}
+		}
 	}
 	return m, nil
 }

@@ -9,6 +9,10 @@ import (
 type Model struct {
 	Previous   key.Binding
 	Next       key.Binding
+	Metrics    key.Binding
+	Drag       key.Binding
+	Zoom       key.Binding
+	ResetGraph key.Binding
 	ToggleHelp key.Binding
 	Quit       key.Binding
 }
@@ -24,9 +28,25 @@ func NewModel() *Model {
 			key.WithKeys("right", "shift+l"),
 			key.WithHelp("→/l", "next"),
 		),
+		Metrics: key.NewBinding(
+			key.WithKeys("M", "shift+m"),
+			key.WithHelp("M", "metrics"),
+		),
+		Drag: key.NewBinding(
+			key.WithKeys("drag"),
+			key.WithHelp("drag", "move graph"),
+		),
+		Zoom: key.NewBinding(
+			key.WithKeys("wheel"),
+			key.WithHelp("wheel", "zoom graph"),
+		),
+		ResetGraph: key.NewBinding(
+			key.WithKeys("0"),
+			key.WithHelp("0", "fit graph"),
+		),
 		ToggleHelp: key.NewBinding(
 			key.WithKeys("?"),
-			key.WithHelp("?", "more"),
+			key.WithHelp("?", "close help"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),

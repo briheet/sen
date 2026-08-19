@@ -5,10 +5,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/briheet/sen/internal/adapters"
 	"github.com/briheet/sen/internal/config"
+	"github.com/briheet/sen/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,3 +36,40 @@ func TestNewEngineBuildsRuntimeGraph(t *testing.T) {
 	require.NotEmpty(t, engine.Graph.Nodes)
 	require.NotEmpty(t, engine.Graph.Files)
 }
+
+func TestRunCollectsUntilProcessExit(t *testing.T) {
+	runtime := &continuousRuntime{exit: make(chan error, 1)}
+	graph := model.BuildRuntimeGraph("", &model.StaticGraph{
+		Nodes: make(map[model.NodeID]*model.StaticNode), Files: make(map[model.FileID]*model.StaticFile),
+		Packages: make(map[model.PackageID]*model.Package),
+	})
+	target := &Engine{Runtime: runtime, Graph: graph}
+
+	require.NoError(t, target.Run())
+	require.GreaterOrEqual(t, runtime.collections.Load(), int64(3))
+	require.GreaterOrEqual(t, target.Revision(), uint64(3))
+}
+
+type continuousRuntime struct {
+	exit        chan error
+	collections atomic.Int64
+}
+
+func (*continuousRuntime) Start(context.Context) error { return nil }
+
+func (r *continuousRuntime) Collect(ctx context.Context) (model.Observation, error) {
+	select {
+	case <-ctx.Done():
+		return model.Observation{}, ctx.Err()
+	case <-time.After(5 * time.Millisecond):
+	}
+	count := r.collections.Add(1)
+	if count == 3 {
+		r.exit <- nil
+	}
+	return model.Observation{Metrics: &model.RuntimeMetrics{Go: model.GoMetrics{GCCycles: uint64(count)}}}, nil
+}
+
+func (r *continuousRuntime) Wait() error  { return <-r.exit }
+func (*continuousRuntime) Stop() error    { return nil }
+func (*continuousRuntime) Cleanup() error { return nil }

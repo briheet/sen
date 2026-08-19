@@ -118,6 +118,13 @@ func WithSeparators(sep ...string) Option {
 	}
 }
 
+// WithStyles replaces the carousel presentation styles.
+func WithStyles(styles Style) Option {
+	return func(m *Model) {
+		m.styles = styles
+	}
+}
+
 // Selected returns the selected item index.
 func (m Model) Selected() int {
 	return m.cursor

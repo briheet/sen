@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"io"
 	"strings"
@@ -15,23 +16,29 @@ import (
 	"github.com/briheet/sen/internal/tui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
-	"golang.org/x/image/vector"
 )
 
-const maxPooledRenderNodes = 4096
+const (
+	maxPooledRenderNodes  = 4096
+	maxPooledRenderPixels = 2_000_000
+)
 
 type renderRequest struct {
-	nodes                   []node
-	buffer                  *renderNodeBuffer
-	sequence                uint64
-	imageID                 uint32
-	previousImageID         uint32
-	dragging, width, height int
-	originX, originY        int
-	cellWidth, cellHeight   int
-	nodeRadius              float64
-	quiet                   byte
-	done                    chan renderResult
+	nodes                  []node
+	edges                  []edgeModel
+	buffer                 *renderNodeBuffer
+	camera                 camera
+	sequence               uint64
+	imageID                uint32
+	previousImageID        uint32
+	dragging, selected     int
+	hovered, width, height int
+	originX, originY       int
+	cellWidth, cellHeight  int
+	nodeRadius             float64
+	obscured               bool
+	quiet                  byte
+	done                   chan renderResult
 }
 
 type renderResult struct {
@@ -63,28 +70,33 @@ func (m renderReadyMsg) DebugSummary() string {
 
 // renderer serializes image encoding and retains its working memory.
 type renderer struct {
-	dump       io.Writer
-	owner      string
-	edges      []edgeModel
-	palette    graphPalette
-	canvas     *image.Paletted
-	mask       *image.Alpha
-	rasterizer vector.Rasterizer
-	requests   chan renderRequest
-	latest     atomic.Uint64
-	start      sync.Once
+	dump      io.Writer
+	owner     string
+	palette   graphPalette
+	nodeClass []uint8
+	requests  chan renderRequest
+	latest    atomic.Uint64
+	start     sync.Once
 
-	output  bytes.Buffer
-	encoded bytes.Buffer
-	payload bytes.Buffer
-	png     encoderBufferPool
+	output bytes.Buffer
+	chunks kittyChunkWriter
+	png    encoderBufferPool
 }
 
 type encoderBufferPool struct{ buffer *png.EncoderBuffer }
 
-type renderNodeBuffer struct{ nodes []node }
+type renderNodeBuffer struct {
+	nodes []node
+	edges []edgeModel
+}
+
+type renderSurface struct {
+	canvas *image.Paletted
+	blur   []uint16
+}
 
 var renderNodes = sync.Pool{New: func() any { return new(renderNodeBuffer) }}
+var renderSurfaces = sync.Pool{New: func() any { return new(renderSurface) }}
 
 func (p *encoderBufferPool) Get() *png.EncoderBuffer {
 	buffer := p.buffer
@@ -96,11 +108,10 @@ func (p *encoderBufferPool) Put(buffer *png.EncoderBuffer) {
 	p.buffer = buffer
 }
 
-func newRenderer(owner string, edges []edgeModel, dump io.Writer) *renderer {
+func newRenderer(owner string, dump io.Writer) *renderer {
 	return &renderer{
 		owner:    owner,
 		dump:     dump,
-		edges:    append([]edgeModel(nil), edges...),
 		palette:  newGraphPalette(styles.Zakura),
 		requests: make(chan renderRequest, 1),
 	}
@@ -129,7 +140,7 @@ func (r *renderer) cancel(sequence uint64) {
 
 func (r *renderer) run() {
 	for request := range r.requests {
-		err := r.render(request)
+		err := r.render(&request)
 		result := renderResult{err: err}
 		if request.sequence != r.latest.Load() {
 			result = renderResult{dropped: true}
@@ -149,29 +160,43 @@ func (r *renderer) run() {
 	}
 }
 
-func snapshotNodes(source []node) *renderNodeBuffer {
+func snapshotGraph(nodes []node, edges []edgeModel) *renderNodeBuffer {
 	buffer := renderNodes.Get().(*renderNodeBuffer)
-	if cap(buffer.nodes) < len(source) {
-		buffer.nodes = make([]node, len(source))
+	if cap(buffer.nodes) < len(nodes) {
+		buffer.nodes = make([]node, len(nodes))
 	} else {
-		buffer.nodes = buffer.nodes[:len(source)]
+		buffer.nodes = buffer.nodes[:len(nodes)]
 	}
-	copy(buffer.nodes, source)
+	if cap(buffer.edges) < len(edges) {
+		buffer.edges = make([]edgeModel, len(edges))
+	} else {
+		buffer.edges = buffer.edges[:len(edges)]
+	}
+	copy(buffer.nodes, nodes)
+	copy(buffer.edges, edges)
 	return buffer
 }
 
 func releaseRenderNodes(buffer *renderNodeBuffer) {
-	if buffer == nil || cap(buffer.nodes) > maxPooledRenderNodes {
+	if buffer == nil || cap(buffer.nodes) > maxPooledRenderNodes || cap(buffer.edges) > maxPooledRenderNodes {
 		return
 	}
 	clear(buffer.nodes)
+	clear(buffer.edges)
 	buffer.nodes = buffer.nodes[:0]
+	buffer.edges = buffer.edges[:0]
 	renderNodes.Put(buffer)
 }
 
-func (r *renderer) render(request renderRequest) error {
+func (r *renderer) render(request *renderRequest) error {
 	r.output.Reset()
-	image := r.renderImage(request)
+	bounds := image.Rect(0, 0, request.width*request.cellWidth, request.height*request.cellHeight)
+	surface := acquireRenderSurface(bounds, r.palette.colors)
+	defer releaseRenderSurface(surface)
+	r.renderImage(request, surface.canvas)
+	if request.obscured {
+		softenRenderSurface(surface, &r.palette)
+	}
 	options := &kitty.Options{
 		Action:       kitty.Transmit,
 		ID:           int(request.imageID),
@@ -179,7 +204,7 @@ func (r *renderer) render(request renderRequest) error {
 		Transmission: kitty.Direct,
 		Quiet:        request.quiet,
 	}
-	if err := r.encodeImage(image, options); err != nil {
+	if err := r.encodeImage(surface.canvas, options); err != nil {
 		r.trace("upload failed error=%q", err)
 		return err
 	}
@@ -213,21 +238,94 @@ func (r *renderer) render(request renderRequest) error {
 }
 
 func (r *renderer) encodeImage(source image.Image, options *kitty.Options) error {
-	r.encoded.Reset()
-	r.payload.Reset()
+	r.chunks.reset(&r.output, options)
+	base64Writer := base64.NewEncoder(base64.StdEncoding, &r.chunks)
 	encoder := png.Encoder{CompressionLevel: png.BestSpeed, BufferPool: &r.png}
-	if err := encoder.Encode(&r.encoded, source); err != nil {
-		return err
-	}
-	base64Writer := base64.NewEncoder(base64.StdEncoding, &r.payload)
-	if _, err := r.encoded.WriteTo(base64Writer); err != nil {
+	if err := encoder.Encode(base64Writer, source); err != nil {
 		return err
 	}
 	if err := base64Writer.Close(); err != nil {
 		return err
 	}
-	writeChunks(&r.output, r.payload.Bytes(), options)
+	r.chunks.close()
 	return nil
+}
+
+func acquireRenderSurface(bounds image.Rectangle, palette color.Palette) *renderSurface {
+	surface := renderSurfaces.Get().(*renderSurface)
+	if surface.canvas == nil || surface.canvas.Bounds() != bounds {
+		surface.canvas = image.NewPaletted(bounds, palette)
+	} else {
+		surface.canvas.Palette = palette
+	}
+	return surface
+}
+
+func releaseRenderSurface(surface *renderSurface) {
+	// Avoid retaining an unusually large terminal surface through the pool.
+	if surface == nil || surface.canvas == nil || len(surface.canvas.Pix) > maxPooledRenderPixels {
+		return
+	}
+	renderSurfaces.Put(surface)
+}
+
+// softenRenderSurface applies a separable box blur and lowers graph contrast.
+func softenRenderSurface(surface *renderSurface, palette *graphPalette) {
+	const radius = 6
+	canvas := surface.canvas
+	width, height := canvas.Bounds().Dx(), canvas.Bounds().Dy()
+	if width == 0 || height == 0 {
+		return
+	}
+	if cap(surface.blur) < len(canvas.Pix) {
+		surface.blur = make([]uint16, len(canvas.Pix))
+	} else {
+		surface.blur = surface.blur[:len(canvas.Pix)]
+	}
+	level := func(index uint8) int {
+		if index == 0 {
+			return 0
+		}
+		return (int(index)-1)%alphaLevels + 1
+	}
+	for y := range height {
+		row := y * canvas.Stride
+		sum := 0
+		for x := 0; x <= min(radius, width-1); x++ {
+			sum += level(canvas.Pix[row+x])
+		}
+		for x := range width {
+			surface.blur[row+x] = uint16(sum)
+			if next := x + radius + 1; next < width {
+				sum += level(canvas.Pix[row+next])
+			}
+			if previous := x - radius; previous >= 0 {
+				sum -= level(canvas.Pix[row+previous])
+			}
+		}
+	}
+	for x := range width {
+		sum := 0
+		for y := 0; y <= min(radius, height-1); y++ {
+			sum += int(surface.blur[y*canvas.Stride+x])
+		}
+		for y := range height {
+			top, bottom := max(0, y-radius), min(height-1, y+radius)
+			left, right := max(0, x-radius), min(width-1, x+radius)
+			blurred := sum / ((bottom - top + 1) * (right - left + 1)) * 2 / 5
+			if blurred == 0 {
+				canvas.Pix[y*canvas.Stride+x] = 0
+			} else {
+				canvas.Pix[y*canvas.Stride+x] = palette.idle[min(alphaLevels, blurred)]
+			}
+			if next := y + radius + 1; next < height {
+				sum += int(surface.blur[next*canvas.Stride+x])
+			}
+			if previous := y - radius; previous >= 0 {
+				sum -= int(surface.blur[previous*canvas.Stride+x])
+			}
+		}
+	}
 }
 
 func (r *renderer) trace(format string, values ...any) {
