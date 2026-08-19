@@ -4,6 +4,7 @@ package build
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strconv"
 
@@ -46,6 +47,9 @@ func New(ctx context.Context, configuration *config.Config) (*Group, error) {
 		logger:  logs.Logger().With(zap.String("component", "engine")),
 	}
 	group.logger.Info("run initialized", zap.String("log_path", logs.Path()))
+	if path := logs.DebugPath(); path != "" {
+		group.logger.Info("TUI debugging enabled", zap.String("debug_log_path", path))
+	}
 
 	for _, service := range configuration.Services {
 		fields := serviceLogFields(service)
@@ -93,6 +97,16 @@ func (g *Group) LogDir() string {
 // LogPath returns the engine log path.
 func (g *Group) LogPath() string {
 	return g.logs.Path()
+}
+
+// DebugWriter returns the TUI message log when DEBUG is set.
+func (g *Group) DebugWriter() io.Writer {
+	return g.logs.DebugWriter()
+}
+
+// DebugPath returns the TUI debug log path when debugging is enabled.
+func (g *Group) DebugPath() string {
+	return g.logs.DebugPath()
 }
 
 // Run starts every engine and waits for all services to exit.

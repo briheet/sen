@@ -4,6 +4,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/briheet/sen/internal/build"
@@ -23,13 +25,16 @@ func NewTui(ctx context.Context, configuration *config.Config) (*Tui, error) {
 		return nil, err
 	}
 	return &Tui{
-		model: initialModel(group.Engines, configuration.Services, group.LogPath()),
+		model: initialModel(group.Engines, configuration.Services, group.LogPath(), group.DebugWriter()),
 		group: group,
 	}, nil
 }
 
 // Run starts the engines and owns their shutdown and cleanup.
 func (t *Tui) Run(ctx context.Context) error {
+	if path := t.group.DebugPath(); path != "" {
+		_, _ = fmt.Fprintln(os.Stderr, "TUI debug log:", path)
+	}
 	program := tea.NewProgram(t.model, tea.WithContext(ctx))
 	done := make(chan error, 1)
 	// Engine execution blocks, so keep it outside Bubble Tea's event loop

@@ -16,10 +16,10 @@ import (
 
 const (
 	Version = "0.1.0"
-	CPUFile = "cpu.pprof"
-	MEMFile = "mem.pprof"
+	cpuFile = "cpu.pprof"
+	memFile = "mem.pprof"
 
-	Ascii = `
+	ascii = `
     /$$$$$$                     
    /$$__  $$                    
   | $$  \__/  /$$$$$$  /$$$$$$$ 
@@ -31,14 +31,13 @@ const (
 `
 )
 
-var (
-	Profile   bool
-	logoStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(styles.Zakura.Primary)
-)
+var logoStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(styles.Zakura.Primary)
 
 func Execute(ctx context.Context) int {
+	var profile bool
+	var cpuProfile *os.File
 	rootCmd := &cobra.Command{
 		Use:     "sen",
 		Aliases: []string{"senbonzakura"},
@@ -65,30 +64,38 @@ sen run --config ./config/sen.toml
 		Args:    cobra.NoArgs,
 		Version: Version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if !Profile {
+			if !profile {
 				return nil
 			}
 
-			f, perr := os.Create(CPUFile)
+			f, perr := os.Create(cpuFile)
 			if perr != nil {
 				return perr
 			}
-
-			_ = pprof.StartCPUProfile(f)
+			if perr = pprof.StartCPUProfile(f); perr != nil {
+				_ = f.Close()
+				return perr
+			}
+			cpuProfile = f
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintln(cmd.OutOrStdout(), logoStyle.Render(strings.Trim(Ascii, "\n")))
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), logoStyle.Render(strings.Trim(ascii, "\n"))); err != nil {
+				return err
+			}
 			return cmd.Help()
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-			if !Profile {
+			if !profile {
 				return nil
 			}
 
 			pprof.StopCPUProfile()
+			if err := cpuProfile.Close(); err != nil {
+				return err
+			}
 
-			f, perr := os.Create(MEMFile)
+			f, perr := os.Create(memFile)
 			if perr != nil {
 				return perr
 			}
@@ -100,15 +107,8 @@ sen run --config ./config/sen.toml
 		},
 	}
 
-	// Define all your flags here
-	rootCmd.PersistentFlags().BoolVarP(&Profile, "profile", "p", false, "record CPU and Mem pprof")
-
-	// Main run command for configured services.
+	rootCmd.PersistentFlags().BoolVarP(&profile, "profile", "p", false, "record CPU and Mem pprof")
 	rootCmd.AddCommand(RunCmd())
-
-	// if err := rootCmd.ExecuteContext(ctx); err != nil {
-	// return 1
-	// }
 	if err := fang.Execute(ctx,
 		rootCmd,
 		fang.WithVersion(Version),

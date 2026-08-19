@@ -2,6 +2,8 @@
 package tui
 
 import (
+	"io"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/briheet/sen/internal/config"
@@ -21,7 +23,7 @@ type enginesDoneMsg struct{}
 
 // TODO: After Redis gets added, remove services passed in this
 // and use the engine config to switch on types.
-func initialModel(engines []*engine.Engine, services []config.Service, logPath string) model {
+func initialModel(engines []*engine.Engine, services []config.Service, logPath string, dump io.Writer) model {
 	pageModels := make([]pages.Page, 0, len(services))
 	targets := make(map[string]*engine.Engine, len(engines))
 	for _, target := range engines {
@@ -37,7 +39,7 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 			if target == nil {
 				continue
 			}
-			page = servers.New(target)
+			page = servers.New(target, dump)
 		case config.ServiceTypeKV:
 			if target == nil {
 				page = kv.FromService(service)
@@ -55,6 +57,7 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 	keyMap := keys.NewModel()
 
 	return model{
+		dump:   dump,
 		ctx:    ctx,
 		header: header.NewModel(ctx),
 		footer: footer.NewModel(keyMap, theme),

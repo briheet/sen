@@ -42,10 +42,13 @@ type reflected struct{}
 func (worker) Run(value int) int { return helper(value) }
 func (reflected) Reflected() {}
 func dead() {}
+func callback() {}
+func use(callback func()) { callback() }
 
 func main() {
 	helper(1)
 	helper(2)
+	use(callback)
 	var r runner = worker{}
 	r.Run(3)
 	reflect.ValueOf(reflected{}).MethodByName("Reflected").Call(nil)
@@ -95,8 +98,10 @@ func helper(value int) int {
 	}
 	mainNode := byName["main"]
 	helperNode := byName["helper"]
+	callbackNode := byName["callback"]
 	require.NotNil(t, mainNode)
 	require.NotNil(t, helperNode)
+	require.NotNil(t, callbackNode)
 	require.NotNil(t, runNode)
 	require.NotNil(t, reflectedNode)
 	require.Nil(t, deadNode)
@@ -122,6 +127,7 @@ func helper(value int) int {
 	require.NotNil(t, closure.Parent)
 	require.Equal(t, mainNode.ID, *closure.Parent)
 	require.Equal(t, SyntaxFuncLit, closure.Syntax.Kind)
+	require.Contains(t, mainNode.Function.References, callbackNode.ID)
 
 	var mainFile, helperFile *File
 	for _, file := range parsed.Files {

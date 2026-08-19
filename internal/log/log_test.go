@@ -15,7 +15,7 @@ import (
 func TestRunWritesStructuredServiceLogs(t *testing.T) {
 	cacheDir := t.TempDir()
 	startedAt := time.Date(2026, time.August, 18, 10, 20, 30, 123, time.UTC)
-	run, err := newRun(cacheDir, "my-backend", startedAt)
+	run, err := newRun(cacheDir, "my-backend", startedAt, false)
 	require.NoError(t, err)
 
 	wantDir := filepath.Join(cacheDir, applicationName, "my-backend-20260818T102030.000000123Z")
@@ -53,8 +53,22 @@ func TestRunWritesStructuredServiceLogs(t *testing.T) {
 }
 
 func TestRunRejectsProjectPath(t *testing.T) {
-	_, err := newRun(t.TempDir(), "../project", time.Now())
+	_, err := newRun(t.TempDir(), "../project", time.Now(), false)
 	require.ErrorIs(t, err, errInvalidProjectName)
+}
+
+func TestRunCreatesTUIDebugLog(t *testing.T) {
+	run, err := newRun(t.TempDir(), "my-backend", time.Now(), true)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(run.Dir(), tuiLogName), run.DebugPath())
+
+	_, err = run.DebugWriter().Write([]byte("message\n"))
+	require.NoError(t, err)
+	require.NoError(t, run.Close())
+
+	content, err := os.ReadFile(run.DebugPath())
+	require.NoError(t, err)
+	require.Equal(t, "message\n", string(content))
 }
 
 func readEntries(t *testing.T, path string) []map[string]any {

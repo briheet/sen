@@ -309,6 +309,28 @@ func buildGraph(result *rta.Result) *Graph {
 			}
 		}
 		slices.Sort(node.Function.AnonFuncs)
+
+		references := make(map[NodeID]struct{})
+		for _, block := range callNode.Func.Blocks {
+			for _, instruction := range block.Instrs {
+				for _, operand := range instruction.Operands(nil) {
+					if operand == nil {
+						continue
+					}
+					function, ok := (*operand).(*ssa.Function)
+					if !ok {
+						continue
+					}
+					if id, found := functionIDs[function]; found && id != node.ID {
+						references[id] = struct{}{}
+					}
+				}
+			}
+		}
+		for id := range references {
+			node.Function.References = append(node.Function.References, id)
+		}
+		slices.Sort(node.Function.References)
 	}
 
 	in := make(map[NodeID]map[NodeID]struct{}, len(nodes))

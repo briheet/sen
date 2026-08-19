@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,6 +15,7 @@ import (
 )
 
 func TestModelContainsBuiltEngines(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
 	engines := []*engine.Engine{
 		{Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo}},
 		{Service: config.Service{Name: "worker", Type: config.ServiceTypeServer, Lang: config.ServiceLangNode}},
@@ -23,7 +25,7 @@ func TestModelContainsBuiltEngines(t *testing.T) {
 		engines[1].Service,
 		{Name: "cache", Type: config.ServiceTypeKV, Provider: config.ServiceProviderRedis, Address: "localhost:6379"},
 	}
-	m := initialModel(engines, services, "/cache/sen/project/engine.log")
+	m := initialModel(engines, services, "/cache/sen/project/engine.log", nil)
 	require.Len(t, m.ctx.Pages(), 3)
 	apiPage, _ := m.ctx.Page("api")
 	workerPage, _ := m.ctx.Page("worker")
@@ -39,12 +41,16 @@ func TestModelContainsBuiltEngines(t *testing.T) {
 	require.Equal(t, styles.Zakura, m.activeTheme)
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	view := updated.(model).View()
-	require.Contains(t, view.Content, "api (go)")
+	updatedModel := updated.(model)
+	view := updatedModel.View()
+	require.Contains(t, view.Content, "api")
 	require.Contains(t, view.Content, "sen 0.1.0")
 	require.Equal(t, 80, lipgloss.Width(view.Content))
 	require.Equal(t, 24, lipgloss.Height(view.Content))
 	require.True(t, view.AltScreen)
+	require.Equal(t, tea.MouseModeCellMotion, view.MouseMode)
+	require.Equal(t, 1, lipgloss.Height(updatedModel.header.View()))
+	require.Contains(t, view.Content, "╭")
 }
 
 func TestModelMapsKVEngine(t *testing.T) {
@@ -53,11 +59,21 @@ func TestModelMapsKVEngine(t *testing.T) {
 		Type:     config.ServiceTypeKV,
 		Provider: config.ServiceProviderRedis,
 	}}
-	model := initialModel([]*engine.Engine{target}, []config.Service{target.Service}, "")
+	model := initialModel([]*engine.Engine{target}, []config.Service{target.Service}, "", nil)
 
 	cachePage, _ := model.ctx.Page("cache")
 	cache := cachePage.(kv.Model)
 	require.Same(t, target, cache.Engine)
 	require.Equal(t, "cache", model.ctx.ActivePage())
 	require.Contains(t, model.View().Content, "cache (redis)")
+}
+
+func TestModelDumpsMessages(t *testing.T) {
+	var dump bytes.Buffer
+	m := initialModel(nil, nil, "", &dump)
+
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	require.Contains(t, dump.String(), "(tea.WindowSizeMsg)")
+	require.Contains(t, dump.String(), "Width: (int) 80")
 }

@@ -13,7 +13,7 @@ func (m model) View() tea.View {
 
 	width := max(0, m.width-2)
 	height := max(0, m.height-2)
-	border := lipgloss.NormalBorder()
+	border := lipgloss.RoundedBorder()
 	header := lipgloss.NewStyle().
 		Width(width).
 		Align(lipgloss.Center).
@@ -25,7 +25,7 @@ func (m model) View() tea.View {
 	content := lipgloss.NewStyle().
 		Width(width).
 		Height(max(0, height-lipgloss.Height(header)-lipgloss.Height(footer))).
-		Align(lipgloss.Center, lipgloss.Center).
+		Align(lipgloss.Left, lipgloss.Top).
 		Render(view.Content)
 
 	layout := lipgloss.JoinVertical(lipgloss.Left, header, content, footer)

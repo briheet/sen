@@ -3,6 +3,7 @@ package log
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -18,17 +19,20 @@ var errInvalidProjectName = errors.New("project name must not be a path")
 const (
 	applicationName = "sen"
 	engineLogName   = "engine.log"
+	tuiLogName      = "tui.log"
 	timestampFormat = "20060102T150405.000000000Z"
 )
 
 // Run owns the logger and process streams for one invocation.
 type Run struct {
-	dir     string
-	path    string
-	file    *os.File
-	logger  *zap.Logger
-	writers []*zapio.Writer
-	closed  bool
+	dir       string
+	path      string
+	file      *os.File
+	debug     *os.File
+	debugPath string
+	logger    *zap.Logger
+	writers   []*zapio.Writer
+	closed    bool
 }
 
 // New creates a project-scoped log directory in the user cache.
@@ -37,10 +41,11 @@ func New(project string) (*Run, error) {
 	if err != nil {
 		return nil, errors.Join(errors.New("resolve user cache directory"), err)
 	}
-	return newRun(cacheDir, project, time.Now().UTC())
+	_, debug := os.LookupEnv("DEBUG")
+	return newRun(cacheDir, project, time.Now().UTC(), debug)
 }
 
-func newRun(cacheDir, project string, startedAt time.Time) (*Run, error) {
+func newRun(cacheDir, project string, startedAt time.Time, debug bool) (*Run, error) {
 	if project == "" || project == "." || project == ".." || filepath.Base(project) != project {
 		return nil, errInvalidProjectName
 	}
@@ -58,6 +63,18 @@ func newRun(cacheDir, project string, startedAt time.Time) (*Run, error) {
 		_ = os.Remove(dir)
 		return nil, errors.Join(errors.New("create engine log"), err)
 	}
+	var debugFile *os.File
+	var debugPath string
+	if debug {
+		debugPath = filepath.Join(dir, tuiLogName)
+		debugFile, err = os.OpenFile(debugPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			_ = file.Close()
+			_ = os.Remove(path)
+			_ = os.Remove(dir)
+			return nil, errors.Join(errors.New("create TUI debug log"), err)
+		}
+	}
 
 	encoder := zap.NewProductionEncoderConfig()
 	encoder.EncodeTime = zapcore.ISO8601TimeEncoder
@@ -65,7 +82,7 @@ func newRun(cacheDir, project string, startedAt time.Time) (*Run, error) {
 	logger := zap.New(zapcore.NewCore(zapcore.NewJSONEncoder(encoder), sink, zap.InfoLevel)).With(
 		zap.String("project", project),
 	)
-	return &Run{dir: dir, path: path, file: file, logger: logger}, nil
+	return &Run{dir: dir, path: path, file: file, debug: debugFile, debugPath: debugPath, logger: logger}, nil
 }
 
 // Logger returns the run's structured application logger.
@@ -81,6 +98,16 @@ func (r *Run) Dir() string {
 // Path returns the engine log path.
 func (r *Run) Path() string {
 	return r.path
+}
+
+// DebugWriter returns the TUI message log when DEBUG is set.
+func (r *Run) DebugWriter() io.Writer {
+	return r.debug
+}
+
+// DebugPath returns the TUI debug log path when debugging is enabled.
+func (r *Run) DebugPath() string {
+	return r.debugPath
 }
 
 // Output creates tagged stdout and stderr streams for a service.
@@ -114,6 +141,11 @@ func (r *Run) Close() error {
 	}
 	if err := r.file.Close(); err != nil {
 		errs = append(errs, err)
+	}
+	if r.debug != nil {
+		if err := r.debug.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

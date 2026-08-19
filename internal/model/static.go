@@ -129,11 +129,12 @@ type Selection struct {
 
 // FunctionBody contains a function's body and generic metadata.
 type FunctionBody struct {
-	FreeVars  []Variable
-	Locals    []Variable
-	Blocks    []Block
-	Recover   *BlockID
-	AnonFuncs []NodeID
+	FreeVars   []Variable
+	Locals     []Variable
+	Blocks     []Block
+	Recover    *BlockID
+	AnonFuncs  []NodeID
+	References []NodeID
 
 	TypeArgs       []Type
 	RecvTypeParams []TypeParam
