@@ -5,9 +5,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"fmt"
 	"github.com/briheet/sen/internal/model"
+	"github.com/briheet/sen/internal/tui/components/graph"
 	"github.com/briheet/sen/internal/tui/pages"
 	redismetrics "github.com/briheet/sen/internal/tui/pages/kv/metrics"
-	"github.com/briheet/sen/internal/tui/pages/servers/graph"
 )
 
 var toggleMetrics = key.NewBinding(key.WithKeys("M", "shift+m"))

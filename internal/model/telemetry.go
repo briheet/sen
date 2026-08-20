@@ -95,6 +95,25 @@ type NodeMetrics struct {
 	ActiveResources      uint64
 }
 
+// RustMetrics contains CPU-profile and optional Tokio Console measurements.
+type RustMetrics struct {
+	ProfileSamples uint64
+	ProfileStacks  uint64
+
+	TokioEnabled        bool
+	LiveTasks           uint64
+	TotalTasks          uint64
+	CompletedTasks      uint64
+	Polls               uint64
+	Wakes               uint64
+	SelfWakes           uint64
+	BusyTime            time.Duration
+	ScheduledTime       time.Duration
+	LiveResources       uint64
+	LiveAsyncOperations uint64
+	DroppedEvents       uint64
+}
+
 // RedisMetrics contains measurements exposed by a Redis server.
 type RedisMetrics struct {
 	Version                  string
@@ -156,6 +175,7 @@ type RuntimeMetrics struct {
 	Process  ProcessMetrics
 	Go       GoMetrics
 	Node     NodeMetrics
+	Rust     RustMetrics
 	Redis    RedisMetrics
 	Postgres PostgresMetrics
 }

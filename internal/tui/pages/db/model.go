@@ -8,9 +8,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
+	"github.com/briheet/sen/internal/tui/components/graph"
 	"github.com/briheet/sen/internal/tui/pages"
 	"github.com/briheet/sen/internal/tui/pages/db/metrics"
-	"github.com/briheet/sen/internal/tui/pages/servers/graph"
 	"github.com/briheet/sen/internal/tui/styles"
 )
 

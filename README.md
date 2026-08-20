@@ -5,7 +5,7 @@ services. It combines source analysis with live runtime and service telemetry
 so performance costs and interactions can be visualized across files,
 functions, call paths, and dependencies.
 
-Sen currently supports Go and Node.js applications plus Redis and PostgreSQL services,
+Sen currently supports Go, Node.js, and Rust applications plus Redis and PostgreSQL services,
 combining:
 
 - Static call-graph analysis
@@ -28,6 +28,7 @@ Go 1.25.12 or newer is required to build sen.
 go build -o bin/sen ./cmd/sen
 ./bin/sen run
 ./bin/sen run ./examples/go/http
+./bin/sen run ./examples/rust
 ./bin/sen run ./examples/redis
 ./bin/sen run ./examples/postgres
 ./bin/sen run --config ./config/sen.toml

@@ -1,0 +1,10 @@
+[project]
+name = "rust-example"
+
+[[services]]
+name = "api"
+type = "server"
+lang = "rust"
+path = "."
+tokio_console = "inject"
+run_args = ["127.0.0.1:8081"]

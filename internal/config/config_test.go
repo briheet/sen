@@ -91,6 +91,8 @@ func TestLoadErrors(t *testing.T) {
 		{name: "server missing path", content: validConfig("name = \"api\"\ntype = \"server\"\nlang = \"go\""), want: "requires path"},
 		{name: "server with provider", content: validConfig("name = \"api\"\ntype = \"server\"\nlang = \"go\"\nprovider = \"redis\"\npath = \".\""), want: "cannot define provider"},
 		{name: "server with address", content: validConfig("name = \"api\"\ntype = \"server\"\nlang = \"node\"\npath = \".\"\naddress = \"localhost:3000\""), want: "cannot define address"},
+		{name: "non-Rust Tokio Console", content: validConfig("name = \"api\"\ntype = \"server\"\nlang = \"go\"\npath = \".\"\ntokio_console = \"inject\""), want: "cannot define tokio_console"},
+		{name: "unsupported Tokio Console mode", content: validConfig("name = \"api\"\ntype = \"server\"\nlang = \"rust\"\npath = \".\"\ntokio_console = \"auto\""), want: "TokioConsole"},
 		{name: "kv missing provider", content: validConfig("name = \"cache\"\ntype = \"kv\"\naddress = \"localhost:6379\""), want: "requires provider"},
 		{name: "kv missing address", content: validConfig("name = \"cache\"\ntype = \"kv\"\nprovider = \"redis\""), want: "requires address"},
 		{name: "kv with lang", content: validConfig("name = \"cache\"\ntype = \"kv\"\nprovider = \"redis\"\nlang = \"go\"\naddress = \"localhost:6379\""), want: "cannot define lang"},
@@ -112,6 +114,18 @@ func TestLoadErrors(t *testing.T) {
 			require.ErrorContains(t, err, test.want)
 		})
 	}
+}
+
+func TestLoadRust(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sen.toml")
+	require.NoError(t, os.WriteFile(path, []byte(validConfig("name = \"api\"\ntype = \"server\"\nlang = \"rust\"\npath = \".\"\ntokio_console = \"existing\"")), 0o600))
+
+	result, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, ServiceLangRust, result.Services[0].Lang)
+	require.Equal(t, TokioConsoleExisting, result.Services[0].TokioConsole)
 }
 
 func TestLoadMissingFile(t *testing.T) {
