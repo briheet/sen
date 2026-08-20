@@ -30,14 +30,12 @@ type Engine struct {
 func NewEngine(ctx context.Context, service config.Service, output adapters.Output) (*Engine, error) {
 	target := string(service.Lang)
 	source := service.Path
-	if service.Type == config.ServiceTypeKV {
+	if service.Type == config.ServiceTypeKV || service.Type == config.ServiceTypeDB {
 		target = string(service.Provider)
 		source = service.Address
 	} else {
-		if target != adapters.PostgresTarget {
-			if err := helpers.ValidateSourcePath(source); err != nil {
-				return nil, err
-			}
+		if err := helpers.ValidateSourcePath(source); err != nil {
+			return nil, err
 		}
 	}
 	application, err := factory.Application(target)

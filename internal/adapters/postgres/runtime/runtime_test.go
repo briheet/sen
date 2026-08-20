@@ -57,10 +57,10 @@ func TestObservedAttribution(t *testing.T) {
 	)
 	graph := model.BuildRuntimeGraph(analysis.ModulePath, static)
 
-	profiles := map[string]*model.Profile{
-		trace.StatementsSource: trace.Statements([]trace.Statement{{QueryID: 111, Query: "SELECT 1", Calls: 5, TotalExec: 2.5}}),
-		trace.TablesSource:     trace.Tables([]trace.Table{{Name: "users", SeqScan: 4, LiveTuples: 200}}),
-	}
+	profiles := trace.NewSnapshot(
+		[]trace.Statement{{QueryID: 111, Query: "SELECT 1", Calls: 5, TotalExec: 2.5}},
+		[]trace.Table{{Name: "users", SeqScan: 4, LiveTuples: 200}},
+	).Profiles(time.Second)
 	graph.ApplyUpdate(graph.BuildUpdate(&model.RuntimeMetrics{}, profiles, nil))
 
 	byName := make(map[string]model.CodeMetrics)
@@ -68,11 +68,26 @@ func TestObservedAttribution(t *testing.T) {
 		byName[node.Static.Name] = node.Metrics
 	}
 
-	stmt := byName["111"]
-	require.NotNil(t, stmt, "statement node 111 should have attributed heat")
-	assert.Equal(t, int64(5), stmt[model.Metric{Source: trace.StatementsSource, Name: "calls", Unit: "count"}].Self)
+	statement := byName["SELECT 1"]
+	require.NotNil(t, statement, "statement node 111 should have attributed heat")
+	assert.Equal(t, int64(5), statement[model.Metric{Source: trace.StatementsSource, Name: "calls", Unit: "count"}].Self)
 
 	users := byName["users"]
 	require.NotNil(t, users, "table node users should have attributed heat")
-	assert.Equal(t, int64(4), users[model.Metric{Source: trace.TablesSource, Name: "calls", Unit: "count"}].Self)
+	assert.Equal(t, int64(4), users[model.Metric{Source: trace.TablesSource, Name: "operations", Unit: "count"}].Self)
+}
+
+func TestStopUnblocksWaitAndCleanupIsIdempotent(t *testing.T) {
+	collector := NewCollector("postgres://unused")
+	done := make(chan error, 1)
+	go func() { done <- collector.Wait() }()
+
+	require.NoError(t, collector.Stop())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Wait did not unblock after Stop")
+	}
+	require.NoError(t, collector.Cleanup())
 }

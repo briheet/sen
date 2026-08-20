@@ -36,6 +36,12 @@ name = "cache"
 type = "kv"
 provider = "redis"
 address = "localhost:6379"
+
+[[services]]
+name = "database"
+type = "db"
+provider = "postgres"
+address = " postgres://sen:sen@localhost:5432/sen "
 `)
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 
@@ -59,6 +65,7 @@ address = "localhost:6379"
 			RunArgs: []string{"--queue", "events"},
 		},
 		{Name: "cache", Type: ServiceTypeKV, Provider: ServiceProviderRedis, Address: "localhost:6379"},
+		{Name: "database", Type: ServiceTypeDB, Provider: ServiceProviderPostgres, Address: "postgres://sen:sen@localhost:5432/sen"},
 	}, result.Services)
 }
 
@@ -89,6 +96,10 @@ func TestLoadErrors(t *testing.T) {
 		{name: "kv with lang", content: validConfig("name = \"cache\"\ntype = \"kv\"\nprovider = \"redis\"\nlang = \"go\"\naddress = \"localhost:6379\""), want: "cannot define lang"},
 		{name: "kv with path", content: validConfig("name = \"cache\"\ntype = \"kv\"\nprovider = \"redis\"\naddress = \"localhost:6379\"\npath = \".\""), want: "cannot define path"},
 		{name: "kv with arguments", content: validConfig("name = \"cache\"\ntype = \"kv\"\nprovider = \"redis\"\naddress = \"localhost:6379\"\nrun_args = [\"--flag\"]"), want: "cannot define build_args or run_args"},
+		{name: "kv with database provider", content: validConfig("name = \"cache\"\ntype = \"kv\"\nprovider = \"postgres\"\naddress = \"localhost:5432\""), want: "unsupported provider"},
+		{name: "db missing provider", content: validConfig("name = \"database\"\ntype = \"db\"\naddress = \"localhost:5432\""), want: "requires provider"},
+		{name: "db missing address", content: validConfig("name = \"database\"\ntype = \"db\"\nprovider = \"postgres\""), want: "requires address"},
+		{name: "db with kv provider", content: validConfig("name = \"database\"\ntype = \"db\"\nprovider = \"redis\"\naddress = \"localhost:5432\""), want: "unsupported provider"},
 	}
 
 	for _, test := range tests {

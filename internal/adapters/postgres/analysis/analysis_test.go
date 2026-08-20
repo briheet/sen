@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,6 @@ func TestBuildGraph(t *testing.T) {
 	require.NotNil(t, graph.Nodes[graph.Root])
 	assert.Equal(t, "postgres-server", graph.Nodes[graph.Root].Name)
 
-	// root + 2 statements + 2 tables
 	assert.Equal(t, 5, len(graph.Nodes))
 
 	names := make(map[string]bool)
@@ -31,8 +31,8 @@ func TestBuildGraph(t *testing.T) {
 		require.NotNil(t, file)
 		assert.Contains(t, file.Path, ModulePath+"/")
 	}
-	assert.True(t, names["111"])
-	assert.True(t, names["222"])
+	assert.True(t, names["SELECT 1"])
+	assert.True(t, names["INSERT INTO t"])
 	assert.True(t, names["users"])
 	assert.True(t, names["orders"])
 }
@@ -49,4 +49,11 @@ func TestBuildGraphEmpty(t *testing.T) {
 	graph := BuildGraph(nil, nil)
 	require.Equal(t, 1, len(graph.Nodes))
 	assert.Equal(t, "postgres-server", graph.Nodes[graph.Root].Name)
+}
+
+func TestStatementLabel(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "SELECT 1", StatementLabel(" SELECT  1\n"))
+	assert.Equal(t, strings.Repeat("x", maxLabel)+"…", StatementLabel(strings.Repeat("x", 100)))
 }

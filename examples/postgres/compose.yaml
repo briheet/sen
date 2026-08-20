@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+    environment:
+      POSTGRES_DB: sen
+      POSTGRES_USER: sen
+      POSTGRES_PASSWORD: sen
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./workload.sql:/workload.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sen -d sen"]
+      interval: 1s
+      timeout: 3s
+      retries: 20

@@ -34,6 +34,8 @@ const (
 	ServiceTypeServer ServiceType = "server"
 	// ServiceTypeKV identifies a key-value datastore.
 	ServiceTypeKV ServiceType = "kv"
+	// ServiceTypeDB identifies a database service.
+	ServiceTypeDB ServiceType = "db"
 )
 
 // ServiceLang identifies a server runtime adapter.
@@ -44,8 +46,6 @@ const (
 	ServiceLangGo ServiceLang = "go"
 	// ServiceLangNode identifies the Node.js server adapter.
 	ServiceLangNode ServiceLang = "node"
-	// ServiceLangPostgres identifies a PostgreSQL server adapter.
-	ServiceLangPostgres ServiceLang = "postgres"
 )
 
 // ServiceProvider identifies an external service implementation.
@@ -54,6 +54,8 @@ type ServiceProvider string
 const (
 	// ServiceProviderRedis identifies a Redis key-value service.
 	ServiceProviderRedis ServiceProvider = "redis"
+	// ServiceProviderPostgres identifies a PostgreSQL database service.
+	ServiceProviderPostgres ServiceProvider = "postgres"
 )
 
 // Config describes a sen project and its services.
@@ -70,9 +72,9 @@ type Project struct {
 // Service describes one process or external service.
 type Service struct {
 	Name      string          `mapstructure:"name" validate:"required"`
-	Type      ServiceType     `mapstructure:"type" validate:"required,oneof=server kv"`
-	Lang      ServiceLang     `mapstructure:"lang" validate:"omitempty,oneof=go node postgres"`
-	Provider  ServiceProvider `mapstructure:"provider" validate:"omitempty,oneof=redis"`
+	Type      ServiceType     `mapstructure:"type" validate:"required,oneof=server kv db"`
+	Lang      ServiceLang     `mapstructure:"lang" validate:"omitempty,oneof=go node"`
+	Provider  ServiceProvider `mapstructure:"provider" validate:"omitempty,oneof=redis postgres"`
 	Path      string          `mapstructure:"path"`
 	Address   string          `mapstructure:"address"`
 	BuildArgs []string        `mapstructure:"build_args"`
@@ -148,33 +150,45 @@ func (c *Config) validate(baseDir string) error {
 			if service.Address != "" {
 				return errors.New("service " + strconv.Quote(service.Name) + " cannot define address")
 			}
-			if service.Lang == ServiceLangPostgres {
-				// PostgreSQL uses path as a connection string, not a filesystem path.
-				service.Path = strings.TrimSpace(service.Path)
-			} else if filepath.IsAbs(service.Path) {
+			if filepath.IsAbs(service.Path) {
 				service.Path = filepath.Clean(service.Path)
 			} else {
 				service.Path = filepath.Clean(filepath.Join(baseDir, service.Path))
 			}
 		case ServiceTypeKV:
-			if service.Provider == "" {
-				return errors.New("service " + strconv.Quote(service.Name) + " requires provider")
+			if err := validateExternalService(service, ServiceProviderRedis); err != nil {
+				return err
 			}
-			if service.Lang != "" {
-				return errors.New("service " + strconv.Quote(service.Name) + " cannot define lang")
-			}
-			if strings.TrimSpace(service.Address) == "" {
-				return errors.New("service " + strconv.Quote(service.Name) + " requires address")
-			}
-			if service.Path != "" {
-				return errors.New("service " + strconv.Quote(service.Name) + " cannot define path")
-			}
-			if len(service.BuildArgs) != 0 || len(service.RunArgs) != 0 {
-				return errors.New("service " + strconv.Quote(service.Name) + " cannot define build_args or run_args")
+		case ServiceTypeDB:
+			if err := validateExternalService(service, ServiceProviderPostgres); err != nil {
+				return err
 			}
 		default:
 			return errors.New("service " + strconv.Quote(service.Name) + " has unsupported type " + strconv.Quote(string(service.Type)))
 		}
+	}
+	return nil
+}
+
+func validateExternalService(service *Service, expected ServiceProvider) error {
+	if service.Provider == "" {
+		return errors.New("service " + strconv.Quote(service.Name) + " requires provider")
+	}
+	if service.Provider != expected {
+		return errors.New("service " + strconv.Quote(service.Name) + " has unsupported provider " + strconv.Quote(string(service.Provider)))
+	}
+	if service.Lang != "" {
+		return errors.New("service " + strconv.Quote(service.Name) + " cannot define lang")
+	}
+	if strings.TrimSpace(service.Address) == "" {
+		return errors.New("service " + strconv.Quote(service.Name) + " requires address")
+	}
+	service.Address = strings.TrimSpace(service.Address)
+	if service.Path != "" {
+		return errors.New("service " + strconv.Quote(service.Name) + " cannot define path")
+	}
+	if len(service.BuildArgs) != 0 || len(service.RunArgs) != 0 {
+		return errors.New("service " + strconv.Quote(service.Name) + " cannot define build_args or run_args")
 	}
 	return nil
 }

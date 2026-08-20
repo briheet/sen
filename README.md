@@ -5,7 +5,7 @@ services. It combines source analysis with live runtime and service telemetry
 so performance costs and interactions can be visualized across files,
 functions, call paths, and dependencies.
 
-Sen currently supports Go and Node.js applications plus running Redis services,
+Sen currently supports Go and Node.js applications plus Redis and PostgreSQL services,
 combining:
 
 - Static call-graph analysis
@@ -13,9 +13,9 @@ combining:
 - CPU profiles and runtime traces
 - Source-level mapping into a TUI-owned `RuntimeGraph`
 
-Redis workspaces show live server metrics and per-command activity on a
-synthetic command graph. Additional datastore integrations, including
-PostgreSQL, are planned.
+Redis workspaces show per-command activity; PostgreSQL workspaces show
+per-statement and per-table activity. Both include provider-specific live
+metrics dashboards.
 
 The target source is not modified. Adapters instrument each runtime and remove
 their temporary artifacts on exit.
@@ -29,6 +29,7 @@ go build -o bin/sen ./cmd/sen
 ./bin/sen run
 ./bin/sen run ./examples/go/http
 ./bin/sen run ./examples/redis
+./bin/sen run ./examples/postgres
 ./bin/sen run --config ./config/sen.toml
 ```
 
