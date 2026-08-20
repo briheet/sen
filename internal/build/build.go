@@ -48,7 +48,7 @@ func New(ctx context.Context, configuration *config.Config) (*Group, error) {
 		fields := serviceLogFields(service)
 		group.logger.Info("building service", fields...)
 		adapter := string(service.Lang)
-		if service.Type == config.ServiceTypeKV {
+		if service.Type == config.ServiceTypeKV || service.Type == config.ServiceTypeDB {
 			adapter = string(service.Provider)
 		}
 		target, err := engine.NewEngine(ctx, service, logs.Output(service.Name, string(service.Type), adapter))

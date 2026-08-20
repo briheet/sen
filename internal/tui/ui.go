@@ -12,6 +12,7 @@ import (
 	"github.com/briheet/sen/internal/tui/components/statusbar"
 	tuicontext "github.com/briheet/sen/internal/tui/context"
 	"github.com/briheet/sen/internal/tui/pages"
+	"github.com/briheet/sen/internal/tui/pages/db"
 	"github.com/briheet/sen/internal/tui/pages/kv"
 	"github.com/briheet/sen/internal/tui/pages/servers"
 	"github.com/briheet/sen/internal/tui/styles"
@@ -42,6 +43,12 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 				page = kv.FromService(service)
 			} else {
 				page = kv.New(target, dump)
+			}
+		case config.ServiceTypeDB:
+			if target == nil {
+				page = db.FromService(service)
+			} else {
+				page = db.New(target, dump)
 			}
 		default:
 			continue

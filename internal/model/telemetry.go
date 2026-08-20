@@ -123,12 +123,41 @@ type RedisMetrics struct {
 	EvictedKeys              uint64
 }
 
+// PostgresMetrics contains cumulative statistics exposed by PostgreSQL.
+type PostgresMetrics struct {
+	Version             string
+	Database            string
+	Uptime              time.Duration
+	DatabaseSize        uint64
+	MaxConnections      uint64
+	Backends            uint64
+	Active              uint64
+	Idle                uint64
+	Waiting             uint64
+	Locks               uint64
+	Commits             uint64
+	Rollbacks           uint64
+	BlocksRead          uint64
+	BlocksHit           uint64
+	TuplesReturned      uint64
+	TuplesFetched       uint64
+	TuplesIn            uint64
+	TuplesUpd           uint64
+	TuplesDel           uint64
+	TempFiles           uint64
+	TempBytes           uint64
+	Deadlocks           uint64
+	StatementCalls      uint64
+	StatementsAvailable bool
+}
+
 // RuntimeMetrics contains one normalized process and runtime snapshot.
 type RuntimeMetrics struct {
-	Process ProcessMetrics
-	Go      GoMetrics
-	Node    NodeMetrics
-	Redis   RedisMetrics
+	Process  ProcessMetrics
+	Go       GoMetrics
+	Node     NodeMetrics
+	Redis    RedisMetrics
+	Postgres PostgresMetrics
 }
 
 // EventKind identifies a runtime event.

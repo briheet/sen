@@ -1,0 +1,8 @@
+[project]
+name = "postgres-example"
+
+[[services]]
+name = "database"
+type = "db"
+provider = "postgres"
+address = "postgres://sen:sen@localhost:5432/sen?sslmode=disable"
