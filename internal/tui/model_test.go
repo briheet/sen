@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	redisanalysis "github.com/briheet/sen/internal/adapters/redis/analysis"
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
 	runtimeModel "github.com/briheet/sen/internal/model"
@@ -88,7 +89,6 @@ func TestModelMapsKVEngine(t *testing.T) {
 	cache := cachePage.(kv.Model)
 	require.Same(t, target, cache.Engine)
 	require.Equal(t, "cache", model.ctx.ActivePage())
-	require.Contains(t, model.View().Content, "cache (redis)")
 }
 
 func TestModelDumpsMessages(t *testing.T) {
@@ -117,4 +117,20 @@ func TestModelViewUsesCachedTerminalText(t *testing.T) {
 	m = updated.(model)
 
 	require.Zero(t, testing.AllocsPerRun(100, func() { _ = m.View() }))
+}
+
+func BenchmarkRefreshView(b *testing.B) {
+	b.Setenv("TERM", "xterm-ghostty")
+	target := &engine.Engine{
+		Service: config.Service{Name: "cache", Type: config.ServiceTypeKV, Provider: config.ServiceProviderRedis},
+		Graph:   runtimeModel.BuildRuntimeGraph(redisanalysis.ModulePath, redisanalysis.BuildGraph()),
+	}
+	m := initialModel([]*engine.Engine{target}, []config.Service{target.Service}, "", nil)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 173, Height: 45})
+	m = updated.(model)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		m.refreshView()
+	}
 }

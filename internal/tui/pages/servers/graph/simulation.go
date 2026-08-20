@@ -3,20 +3,22 @@ package graph
 import "math"
 
 const (
-	initialAlpha       = 1.0
-	minimumAlpha       = 0.005
-	alphaDecay         = 0.03
-	dragAlpha          = 0.2
-	velocityRetention  = 0.65
-	linkStrength       = 0.08
-	repulsionStrength  = 900.0
-	centerStrength     = 0.002
-	collisionPadding   = 4.0
-	settleVelocity     = 0.05
-	maximumLayoutTicks = 180
-	barnesHutThreshold = 256
-	barnesHutTheta     = 0.9
-	minimumDistance    = 8.0
+	initialAlpha          = 1.0
+	minimumAlpha          = 0.005
+	alphaDecay            = 0.03
+	dragAlpha             = 0.2
+	velocityRetention     = 0.65
+	dragVelocityRetention = 0.84
+	linkStrength          = 0.08
+	dragLinkStrength      = 0.055
+	repulsionStrength     = 900.0
+	centerStrength        = 0.002
+	collisionPadding      = 4.0
+	settleVelocity        = 0.05
+	maximumLayoutTicks    = 180
+	barnesHutThreshold    = 256
+	barnesHutTheta        = 0.9
+	minimumDistance       = 8.0
 )
 
 type simulation struct {
@@ -24,6 +26,7 @@ type simulation struct {
 	tree        []quad
 	alpha       float64
 	alphaTarget float64
+	elastic     bool
 }
 
 type quad struct {
@@ -83,9 +86,13 @@ func (s *simulation) settle(nodes []node, links []edgeModel) {
 func (s *simulation) reheat() {
 	s.alpha = max(s.alpha, dragAlpha)
 	s.alphaTarget = dragAlpha
+	s.elastic = true
 }
 
-func (s *simulation) cool() { s.alphaTarget = 0 }
+func (s *simulation) cool() {
+	s.alphaTarget = 0
+	s.elastic = false
+}
 
 // step advances one deterministic force-layout tick and reports settlement.
 func (s *simulation) step(nodes []node, edges []edgeModel) bool {
@@ -104,6 +111,10 @@ func (s *simulation) step(nodes []node, edges []edgeModel) bool {
 	} else {
 		s.repulsionExact(nodes)
 	}
+	spring, retention := linkStrength, velocityRetention
+	if s.elastic {
+		spring, retention = dragLinkStrength, dragVelocityRetention
+	}
 	for _, edge := range edges {
 		if edge.from == edge.to {
 			continue
@@ -111,12 +122,17 @@ func (s *simulation) step(nodes []node, edges []edgeModel) bool {
 		from, to := nodes[edge.from].position, nodes[edge.to].position
 		delta := point{x: to.x - from.x, y: to.y - from.y}
 		length := max(distance(from, to), 0.001)
-		magnitude := linkStrength * (length - edge.distance)
+		magnitude := 2 * spring * (length - edge.distance)
 		force := point{x: magnitude * delta.x / length, y: magnitude * delta.y / length}
-		s.forces[edge.from].x += force.x
-		s.forces[edge.from].y += force.y
-		s.forces[edge.to].x -= force.x
-		s.forces[edge.to].y -= force.y
+		// A hub receives a smaller share of each link force so hundreds of
+		// adjacent springs cannot launch it—and then the whole layout—away.
+		degreeTotal := float64(max(1, nodes[edge.from].degree) + max(1, nodes[edge.to].degree))
+		fromShare := float64(max(1, nodes[edge.to].degree)) / degreeTotal
+		toShare := float64(max(1, nodes[edge.from].degree)) / degreeTotal
+		s.forces[edge.from].x += force.x * fromShare
+		s.forces[edge.from].y += force.y * fromShare
+		s.forces[edge.to].x -= force.x * toShare
+		s.forces[edge.to].y -= force.y * toShare
 	}
 	for index := range nodes {
 		node := &nodes[index]
@@ -126,8 +142,8 @@ func (s *simulation) step(nodes []node, edges []edgeModel) bool {
 			node.velocity = point{}
 			continue
 		}
-		node.velocity.x = (node.velocity.x + s.forces[index].x*s.alpha) * velocityRetention
-		node.velocity.y = (node.velocity.y + s.forces[index].y*s.alpha) * velocityRetention
+		node.velocity.x = (node.velocity.x + s.forces[index].x*s.alpha) * retention
+		node.velocity.y = (node.velocity.y + s.forces[index].y*s.alpha) * retention
 		node.position.x += node.velocity.x
 		node.position.y += node.velocity.y
 	}

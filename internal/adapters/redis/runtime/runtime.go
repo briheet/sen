@@ -1,4 +1,4 @@
-// Package runtime collects metrics and per-command heat from a running Redis.
+// Package runtime observes a running Redis server over its public protocol.
 package runtime
 
 import (
@@ -13,84 +13,118 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Collector owns a connection to a running Redis server.
+const (
+	collectionInterval = time.Second
+	dialTimeout        = 2 * time.Second
+)
+
+// Collector owns the Redis connection and the state needed to turn cumulative
+// commandstats counters into per-window profiles.
 type Collector struct {
 	client *redis.Client
 
-	Metrics *model.RuntimeMetrics
-	Profile *model.Profile
+	lastCollection time.Time
+	commandStats   trace.Snapshot
 
-	doneOnce sync.Once
-	done     chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
+	closeErr  error
 }
 
 var _ adapters.Runtime = (*Collector)(nil)
 
-// NewCollector dials the given Redis address (e.g. "localhost:6379").
+// NewCollector prepares a client for addr, for example "localhost:6379".
+// Connectivity is verified by Start so engine construction remains side-effect
+// free and produces a useful runtime error at the normal lifecycle boundary.
 func NewCollector(addr string) *Collector {
 	return &Collector{
 		client: redis.NewClient(&redis.Options{
 			Addr:        addr,
-			DialTimeout: 2 * time.Second,
+			DialTimeout: dialTimeout,
 			MaxRetries:  2,
 		}),
 		done: make(chan struct{}),
 	}
 }
 
-// Start verifies connectivity and enables per-command latency tracking using
-// the running server (no source build or target launch is required).
+// Start verifies that the configured Redis server is reachable. Sen only
+// reads INFO and PING; it does not change server configuration.
 func (c *Collector) Start(ctx context.Context) error {
-	if _, err := c.client.Ping(ctx).Result(); err != nil {
-		return err
-	}
-	_ = c.client.ConfigSet(ctx, "latency-tracking", "yes").Err()
-	return nil
+	return c.client.Ping(ctx).Err()
 }
 
-// Collect pulls one complete snapshot: server-wide metrics plus a per-command
-// heat profile derived from INFO commandstats/latencystats. After the first
-// successful snapshot the collector considers its single observation complete.
+// Collect reads one INFO snapshot and returns both server metrics and command
+// activity. Collection is paced here because Redis replies immediately, unlike
+// the one-second profile windows used by the Go and Node adapters.
 func (c *Collector) Collect(ctx context.Context) (model.Observation, error) {
-	body, err := c.client.Info(ctx, "memory", "stats", "cpu", "clients").Result()
-	if err != nil {
+	if err := c.waitForWindow(ctx); err != nil {
 		return model.Observation{}, err
 	}
-	cmdstats, err := c.client.Info(ctx, "commandstats").Result()
+	// The default INFO response omits commandstats on current Redis releases.
+	// Request all sections so the same snapshot feeds both metrics and activity.
+	body, err := c.client.Info(ctx, "all").Result()
 	if err != nil {
 		return model.Observation{}, err
 	}
 
-	c.Metrics = metrics.Decode(body)
-	c.Profile = trace.Decode(cmdstats)
-
-	profiles := map[string]*model.Profile{}
-	if len(c.Profile.Samples) > 0 {
-		profiles[trace.ProfileName] = c.Profile
+	collectedAt := time.Now()
+	duration := collectionInterval
+	if !c.lastCollection.IsZero() {
+		duration = collectedAt.Sub(c.lastCollection)
 	}
-	c.finish()
-	return model.Observation{Metrics: c.Metrics, Profiles: profiles}, nil
+	currentStats := trace.Parse(body)
+	var window trace.Snapshot
+	if c.commandStats != nil {
+		window = currentStats.Delta(c.commandStats)
+	}
+	c.commandStats = currentStats
+	c.lastCollection = collectedAt
+
+	var profiles map[string]*model.Profile
+	if len(window) > 0 {
+		profiles = map[string]*model.Profile{trace.ProfileName: window.Profile(duration)}
+	}
+	return model.Observation{
+		Metrics:  metrics.Decode(body),
+		Profiles: profiles,
+	}, nil
 }
 
-// Wait blocks until the first snapshot is collected or Stop is called.
+func (c *Collector) waitForWindow(ctx context.Context) error {
+	if c.lastCollection.IsZero() {
+		return nil
+	}
+	delay := time.Until(c.lastCollection.Add(collectionInterval))
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// Wait blocks for the lifetime of the attached service. Redis is external to
+// sen, so only Stop or Cleanup completes this runtime.
 func (c *Collector) Wait() error {
 	<-c.done
 	return nil
 }
 
-// Stop terminates observation and releases the connection.
-func (c *Collector) Stop() error {
-	c.finish()
-	return c.client.Close()
-}
+// Stop releases the Redis connection and unblocks Wait.
+func (c *Collector) Stop() error { return c.close() }
 
-// Cleanup releases the connection.
-func (c *Collector) Cleanup() error {
-	c.finish()
-	return c.client.Close()
-}
+// Cleanup is idempotent and releases any connection not already stopped.
+func (c *Collector) Cleanup() error { return c.close() }
 
-// finish unblocks any waiter exactly once.
-func (c *Collector) finish() {
-	c.doneOnce.Do(func() { close(c.done) })
+func (c *Collector) close() error {
+	c.closeOnce.Do(func() {
+		c.closeErr = c.client.Close()
+		close(c.done)
+	})
+	return c.closeErr
 }

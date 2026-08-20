@@ -16,7 +16,7 @@ func TestBuildGraph(t *testing.T) {
 	require.NotNil(t, graph.Nodes[graph.Root])
 	assert.Equal(t, "redis-server", graph.Nodes[graph.Root].Name)
 
-	names := CommandNames()
+	names := knownCommands
 	require.NotEmpty(t, names)
 	assert.Equal(t, "APPEND", names[0])
 	assert.Equal(t, len(names)+1, len(graph.Nodes))
@@ -36,7 +36,7 @@ func TestBuildGraph(t *testing.T) {
 func TestCommandNamesUniqueSorted(t *testing.T) {
 	t.Parallel()
 
-	names := CommandNames()
+	names := knownCommands
 	seen := make(map[string]struct{}, len(names))
 	for i, name := range names {
 		if i > 0 {

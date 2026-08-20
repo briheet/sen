@@ -97,14 +97,30 @@ type NodeMetrics struct {
 
 // RedisMetrics contains measurements exposed by a Redis server.
 type RedisMetrics struct {
+	Version                  string
+	Mode                     string
+	Role                     string
+	Uptime                   time.Duration
 	UsedMemory               uint64
+	PeakMemory               uint64
 	UsedMemoryDataset        uint64
 	RSS                      uint64
+	MaxMemory                uint64
+	MemoryFragmentationRatio float64
 	UserCPU                  float64
 	SystemCPU                float64
 	ConnectedClients         uint64
+	BlockedClients           uint64
+	Keys                     uint64
+	InstantaneousOps         uint64
 	TotalCommandsProcessed   uint64
 	TotalConnectionsReceived uint64
+	NetworkInputBytes        uint64
+	NetworkOutputBytes       uint64
+	KeyspaceHits             uint64
+	KeyspaceMisses           uint64
+	ExpiredKeys              uint64
+	EvictedKeys              uint64
 }
 
 // RuntimeMetrics contains one normalized process and runtime snapshot.

@@ -1,6 +1,9 @@
 package trace
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func BenchmarkDecode(b *testing.B) {
 	body := ""
@@ -10,7 +13,7 @@ func BenchmarkDecode(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		p := Decode(body)
+		p := Parse(body).Profile(time.Second)
 		_ = p
 	}
 }

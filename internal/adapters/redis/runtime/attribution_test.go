@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"testing"
+	"time"
 
 	"github.com/briheet/sen/internal/adapters/redis/analysis"
 	"github.com/briheet/sen/internal/adapters/redis/runtime/trace"
@@ -18,7 +19,7 @@ func TestObservedAttribution(t *testing.T) {
 
 	graph := analysis.BuildGraph()
 	runtimeGraph := model.BuildRuntimeGraph(analysis.ModulePath, graph)
-	profiles := map[string]*model.Profile{trace.ProfileName: trace.Decode(cmdstats)}
+	profiles := map[string]*model.Profile{trace.ProfileName: trace.Parse(cmdstats).Profile(time.Second)}
 	runtimeGraph.ApplyUpdate(runtimeGraph.BuildUpdate(&model.RuntimeMetrics{}, profiles, nil))
 
 	byName := make(map[string]model.CodeMetrics)
@@ -29,7 +30,7 @@ func TestObservedAttribution(t *testing.T) {
 	get := byName["GET"]
 	require.NotNil(t, get)
 	assert.Equal(t, int64(3), get[model.Metric{Source: trace.ProfileName, Name: "calls", Unit: "count"}].Self)
-	assert.Equal(t, int64(9), get[model.Metric{Source: trace.ProfileName, Name: "usec", Unit: "nanoseconds"}].Self)
+	assert.Equal(t, int64(9000), get[model.Metric{Source: trace.ProfileName, Name: "time", Unit: "nanoseconds"}].Self)
 
 	set := byName["SET"]
 	require.NotNil(t, set)

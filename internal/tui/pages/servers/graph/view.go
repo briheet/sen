@@ -18,6 +18,7 @@ const (
 	fallbackNodeRadius = 4
 	alphaLevels        = 63
 	edgeWidth          = 1.25
+	edgeGlowWidth      = 6.0
 	labelHysteresis    = 0.75
 	minimumLabelZoom   = 0.6
 )
@@ -279,15 +280,16 @@ func (r *renderer) renderImage(request *renderRequest, canvas *image.Paletted) {
 	r.classifyNodes(request)
 
 	r.drawNodeClass(canvas, request, 2, 3, 0.16)
-	r.drawEdgeClass(canvas, request, 0, 0.22)
-	r.drawEdgeClass(canvas, request, 1, 0.48)
-	r.drawEdgeClass(canvas, request, 2, 0.95)
+	r.drawEdgeClass(canvas, request, 2, edgeGlowWidth, 0.22)
+	r.drawEdgeClass(canvas, request, 0, edgeWidth, 0.22)
+	r.drawEdgeClass(canvas, request, 1, edgeWidth, 0.48)
+	r.drawEdgeClass(canvas, request, 2, edgeWidth, 0.95)
 	r.drawNodeClass(canvas, request, 0, 0, 0.34)
 	r.drawNodeClass(canvas, request, 1, 0, 0.9)
 	r.drawNodeClass(canvas, request, 2, 0, 1)
 }
 
-func (r *renderer) drawEdgeClass(canvas *image.Paletted, request *renderRequest, class int, opacity float64) {
+func (r *renderer) drawEdgeClass(canvas *image.Paletted, request *renderRequest, class int, width, opacity float64) {
 	indexes := &r.palette.idle
 	switch class {
 	case 1:
@@ -304,7 +306,7 @@ func (r *renderer) drawEdgeClass(canvas *image.Paletted, request *renderRequest,
 		fromRadius := renderNodeRadius(request, &request.nodes[edge.from])
 		toRadius := renderNodeRadius(request, &request.nodes[edge.to])
 		from, to = clipEdge(from, to, fromRadius, toRadius)
-		drawCapsule(canvas, indexes, from, to, edgeWidth, opacity)
+		drawCapsule(canvas, indexes, from, to, width, opacity)
 	}
 }
 
@@ -315,11 +317,7 @@ func edgeClass(request *renderRequest, edge edgeModel) int {
 		}
 		return 0
 	}
-	hot := request.dragging
-	if hot < 0 {
-		hot = request.hovered
-	}
-	if hot >= 0 && (edge.from == hot || edge.to == hot) {
+	if request.dragging >= 0 && (edge.from == request.dragging || edge.to == request.dragging) {
 		return 2
 	}
 	if edge.active {
@@ -379,8 +377,7 @@ func (r *renderer) classifyNodes(request *renderRequest) {
 }
 
 func renderNodeRadius(request *renderRequest, node *node) float64 {
-	zoomScale := clamp(math.Sqrt(request.camera.zoom), 0.75, 1.5)
-	return request.nodeRadius * node.scale * zoomScale
+	return request.nodeRadius * node.scale * nodeZoomScale(request.camera.zoom)
 }
 
 func clipEdge(from, to point, fromRadius, toRadius float64) (point, point) {
@@ -406,22 +403,47 @@ func drawCapsule(canvas *image.Paletted, indexes *[alphaLevels + 1]uint8, from, 
 	drawCircle(canvas, indexes, from, radius, opacity)
 	drawCircle(canvas, indexes, to, radius, opacity)
 	padding := int(math.Ceil(radius + 0.5))
+	bounds := canvas.Bounds()
 	if math.Abs(delta.x) >= math.Abs(delta.y) {
-		left, right := int(math.Floor(min(from.x, to.x))), int(math.Ceil(max(from.x, to.x)))
+		left, right, visible := clippedPixelRange(
+			min(from.x, to.x), max(from.x, to.x), bounds.Min.X, bounds.Max.X-1,
+		)
+		if !visible {
+			return
+		}
 		for x := left; x <= right; x++ {
 			t := clamp((float64(x)+0.5-from.x)/delta.x, 0, 1)
 			y := from.y + delta.y*t
-			for pixelY := int(math.Floor(y)) - padding; pixelY <= int(math.Floor(y))+padding; pixelY++ {
+			top, bottom, onCanvas := clippedPixelRange(
+				math.Floor(y)-float64(padding), math.Floor(y)+float64(padding),
+				bounds.Min.Y, bounds.Max.Y-1,
+			)
+			if !onCanvas {
+				continue
+			}
+			for pixelY := top; pixelY <= bottom; pixelY++ {
 				paintDistance(canvas, indexes, x, pixelY, pointSegmentDistance(point{x: float64(x) + 0.5, y: float64(pixelY) + 0.5}, from, delta, lengthSquared), radius, opacity)
 			}
 		}
 		return
 	}
-	top, bottom := int(math.Floor(min(from.y, to.y))), int(math.Ceil(max(from.y, to.y)))
+	top, bottom, visible := clippedPixelRange(
+		min(from.y, to.y), max(from.y, to.y), bounds.Min.Y, bounds.Max.Y-1,
+	)
+	if !visible {
+		return
+	}
 	for y := top; y <= bottom; y++ {
 		t := clamp((float64(y)+0.5-from.y)/delta.y, 0, 1)
 		x := from.x + delta.x*t
-		for pixelX := int(math.Floor(x)) - padding; pixelX <= int(math.Floor(x))+padding; pixelX++ {
+		left, right, onCanvas := clippedPixelRange(
+			math.Floor(x)-float64(padding), math.Floor(x)+float64(padding),
+			bounds.Min.X, bounds.Max.X-1,
+		)
+		if !onCanvas {
+			continue
+		}
+		for pixelX := left; pixelX <= right; pixelX++ {
 			paintDistance(canvas, indexes, pixelX, y, pointSegmentDistance(point{x: float64(pixelX) + 0.5, y: float64(y) + 0.5}, from, delta, lengthSquared), radius, opacity)
 		}
 	}
@@ -429,20 +451,40 @@ func drawCapsule(canvas *image.Paletted, indexes *[alphaLevels + 1]uint8, from, 
 
 func drawCircle(canvas *image.Paletted, indexes *[alphaLevels + 1]uint8, center point, radius, opacity float64) {
 	padding := radius + 0.5
-	left, right := int(math.Floor(center.x-padding)), int(math.Ceil(center.x+padding))
-	top, bottom := int(math.Floor(center.y-padding)), int(math.Ceil(center.y+padding))
+	bounds := canvas.Bounds()
+	left, right, horizontal := clippedPixelRange(
+		center.x-padding, center.x+padding, bounds.Min.X, bounds.Max.X-1,
+	)
+	top, bottom, vertical := clippedPixelRange(
+		center.y-padding, center.y+padding, bounds.Min.Y, bounds.Max.Y-1,
+	)
+	if !horizontal || !vertical {
+		return
+	}
 	for y := top; y <= bottom; y++ {
 		for x := left; x <= right; x++ {
-			distance := math.Hypot(float64(x)+0.5-center.x, float64(y)+0.5-center.y)
+			distance := distance(point{x: float64(x) + 0.5, y: float64(y) + 0.5}, center)
 			paintDistance(canvas, indexes, x, y, distance, radius, opacity)
 		}
 	}
 }
 
-func paintDistance(canvas *image.Paletted, indexes *[alphaLevels + 1]uint8, x, y int, distance, radius, opacity float64) {
-	if !image.Pt(x, y).In(canvas.Bounds()) {
-		return
+// clippedPixelRange intersects a floating-point scan range with inclusive
+// canvas coordinates before converting it to ints. This keeps distant graph
+// geometry from generating work for pixels that cannot be displayed.
+func clippedPixelRange(minimum, maximum float64, lower, upper int) (int, int, bool) {
+	if lower > upper || math.IsNaN(minimum) || math.IsNaN(maximum) {
+		return 0, 0, false
 	}
+	start, end := math.Floor(minimum), math.Ceil(maximum)
+	if end < float64(lower) || start > float64(upper) {
+		return 0, 0, false
+	}
+	return max(lower, int(max(start, float64(lower)))),
+		min(upper, int(min(end, float64(upper)))), true
+}
+
+func paintDistance(canvas *image.Paletted, indexes *[alphaLevels + 1]uint8, x, y int, distance, radius, opacity float64) {
 	coverage := clamp(radius+0.5-distance, 0, 1)
 	level := int(math.Round(coverage * opacity * alphaLevels))
 	if level == 0 {

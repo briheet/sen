@@ -12,32 +12,33 @@ provider = "redis"
 address = "127.0.0.1:6379"
 ```
 
-## How it works
+## Collection pipeline
 
-- **Metrics** come from `INFO memory stats cpu clients`, folded into
-  `model.RuntimeMetrics` (heap/RSS/live dataset, user/sys CPU, connected
-  clients, processed commands, accepted connections).
-- **Tracing / heat** comes from `INFO commandstats` (`cmdstat_<cmd>:
-  calls=...,usec=...`) and is normalized into a per-command profile whose
-  samples attribute `calls` and `usec` to the matching synthetic command nodes.
-  This is the low-overhead analogue of SLOWLOG-based slow-command tracing and
-  needs no injection into the server.
+- `Start` uses `PING` to verify the configured address. The adapter is
+  read-only and does not change Redis configuration.
+- `Collect` reads one complete `INFO` response every second.
+- `runtime/metrics` decodes server, memory, CPU, client, network, keyspace, and
+  command counters into `model.RedisMetrics`.
+- `runtime/trace` converts cumulative `cmdstat_*` values into per-window
+  profiles. Calls and command time are attributed to synthetic command nodes.
+- `Wait` remains active until sen stops the attachment, allowing Redis-only
+  projects to keep a live TUI open.
 
-`Start` verifies connectivity with `PING` and enables `latency-tracking` so
-`latencystats` are populated. `Collect` returns one snapshot: global metrics
-plus a per-command heat profile.
+No source injection, `MONITOR`, `SLOWLOG`, or server-side configuration changes
+are required.
 
 ## Synthetic graph
 
 Redis has no source tree to analyze, so `analysis` synthesizes a `StaticGraph`
 with one node per well-known command (plus a `redis-server` root). Observed
 per-command heat is attributed onto these nodes, giving the TUI a stable
-surface across snapshots. Unknown commands are filtered out of attribution but
-remain countable through the unmapped pool.
+surface across snapshots. Unknown commands are ignored because they have no
+stable node in the synthetic graph.
 
 Files:
 
-- `redis.go` — `Application` adapter (analyze + open).
-- `analysis/` — synthetic command graph.
-- `runtime/` — live collector; `metrics/` parses INFO, `trace/` builds the
-  per-command profile.
+- `redis.go` — small adapter boundary used by the engine factory.
+- `analysis/` — deterministic synthetic command graph.
+- `runtime/` — connection lifecycle and one-second collection loop.
+- `runtime/metrics/` — INFO metrics decoding.
+- `runtime/trace/` — commandstats parsing, deltas, and normalized profiles.

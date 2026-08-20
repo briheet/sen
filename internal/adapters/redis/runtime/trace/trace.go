@@ -1,13 +1,11 @@
-// Package trace builds per-command heat and latency profiles for Redis.
+// Package trace converts Redis commandstats counters into source-like profiles.
 //
-// Redis is observed over its public protocol: INFO commandstats/latencystats
-// provide cumulative per-command call counts and execution time, while
-// SLOWLOG GET surfaces the individual slow command executions. None of these
-// require injecting anything into the server, so tracing is reduced to parsing
-// the text replies and folding them into a normalized profile.
+// Redis has no stack trace for a command. Sen models each known command as one
+// synthetic frame and uses command call/time deltas as profile sample values.
 package trace
 
 import (
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,129 +16,114 @@ import (
 )
 
 const (
-	// ProfileName is the profile source name used for per-command heat.
+	// ProfileName identifies Redis command activity in the runtime graph.
 	ProfileName = "redis"
 	unitCount   = "count"
 	unitNsec    = "nanoseconds"
 )
 
-// commandHeat accumulates per-command observed totals.
-type commandHeat struct {
-	calls uint64
-	usec  uint64
+// Counters contains the cumulative values Redis reports for one command.
+type Counters struct {
+	Calls        uint64
+	Microseconds uint64
 }
 
-// profile maps a command name to its accumulated heat.
-type profile struct {
-	heat map[string]*commandHeat
-}
+// Snapshot contains cumulative command counters keyed by uppercase command.
+type Snapshot map[string]Counters
 
-func newProfile() *profile {
-	return &profile{heat: make(map[string]*commandHeat)}
-}
-
-// addCommand records observed calls/useconds for a command.
-func (p *profile) addCommand(name string, calls, usec uint64) {
-	entry := p.heat[name]
-	if entry == nil {
-		entry = &commandHeat{}
-		p.heat[name] = entry
-	}
-	entry.calls += calls
-	entry.usec += usec
-}
-
-// Decode builds a normalized per-command profile from a commandstats body and
-// the parsed status fields of the server. The body should be the output of
-// `INFO commandstats`.
-func Decode(cmdstats string) *model.Profile {
-	p := newProfile()
-	for _, line := range strings.Split(cmdstats, "\n") {
+// Parse reads cmdstat_* rows from an INFO response. Unknown commands are
+// ignored because the synthetic graph cannot attribute them to a node.
+func Parse(info string) Snapshot {
+	result := make(Snapshot)
+	for line := range strings.SplitSeq(info, "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if !strings.HasPrefix(line, "cmdstat_") {
 			continue
 		}
-		rest := strings.TrimPrefix(line, "cmdstat_")
-		name, stats, ok := strings.Cut(rest, ":")
-		if !ok {
-			continue
-		}
+		name, fields, ok := strings.Cut(strings.TrimPrefix(line, "cmdstat_"), ":")
 		name = strings.ToUpper(name)
-		calls, usec := parseCmdstat(stats)
-		if !analysis.IsKnownCommand(name) {
+		if !ok || !analysis.IsKnownCommand(name) {
 			continue
 		}
-		p.addCommand(name, calls, usec)
+		result[name] = parseCounters(fields)
 	}
-	return p.profile()
+	return result
 }
 
-// parseCmdstat extracts calls and usec from a "calls=1,usec=2,..." fragment.
-func parseCmdstat(stats string) (uint64, uint64) {
-	var calls, usec uint64
-	for stats != "" {
-		var field string
-		if rest, after, ok := strings.Cut(stats, ","); ok {
-			field, stats = rest, after
-		} else {
-			field, stats = stats, ""
-		}
-		key, value, ok := strings.Cut(field, "=")
+func parseCounters(fields string) Counters {
+	var result Counters
+	for field := range strings.SplitSeq(fields, ",") {
+		name, raw, ok := strings.Cut(field, "=")
 		if !ok {
 			continue
 		}
-		switch key {
+		value, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			continue
+		}
+		switch name {
 		case "calls":
-			calls = parseUint(value)
+			result.Calls = value
 		case "usec":
-			usec = parseUint(value)
+			result.Microseconds = value
 		}
 	}
-	return calls, usec
+	return result
 }
 
-func parseUint(value string) uint64 {
-	n, err := strconv.ParseUint(value, 10, 64)
-	if err != nil {
-		return 0
+// Delta returns the activity since previous. A missing command or a smaller
+// counter is treated as new activity after a Redis restart.
+func (current Snapshot) Delta(previous Snapshot) Snapshot {
+	result := make(Snapshot, len(current))
+	for name, counters := range current {
+		before, ok := previous[name]
+		if ok && counters.Calls >= before.Calls && counters.Microseconds >= before.Microseconds {
+			counters.Calls -= before.Calls
+			counters.Microseconds -= before.Microseconds
+		}
+		if counters.Calls > 0 || counters.Microseconds > 0 {
+			result[name] = counters
+		}
 	}
-	return n
+	return result
 }
 
-// profile folds accumulated heat into a model.Profile whose samples point at
-// the synthetic command nodes, so the runtime mapper can attribute them.
-func (p *profile) profile() *model.Profile {
-	names := make([]string, 0, len(p.heat))
-	for name := range p.heat {
+// Profile maps one command window onto the synthetic Redis source graph.
+func (snapshot Snapshot) Profile(duration time.Duration) *model.Profile {
+	names := make([]string, 0, len(snapshot))
+	for name := range snapshot {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
 	result := &model.Profile{
-		Duration:    time.Second,
-		SampleTypes: []model.ValueType{{Type: "calls", Unit: unitCount}, {Type: "usec", Unit: unitNsec}},
+		Duration:    duration,
+		SampleTypes: []model.ValueType{{Type: "calls", Unit: unitCount}, {Type: "time", Unit: unitNsec}},
 		Locations:   make(map[model.ProfileLocationID]model.ProfileLocation, len(names)),
+		Samples:     make([]model.ProfileSample, 0, len(names)),
 	}
-	if len(names) == 0 {
-		return result
-	}
-
-	var id model.ProfileLocationID = 1
-	for _, name := range names {
-		entry := p.heat[name]
-		result.Locations[id] = model.ProfileLocation{
-			ID: id,
+	for index, name := range names {
+		locationID := model.ProfileLocationID(index + 1)
+		result.Locations[locationID] = model.ProfileLocation{
+			ID: locationID,
 			Frames: []model.ProfileFrame{{
 				Function: name,
 				File:     analysis.ModulePath + "/" + name,
 				Line:     1,
 			}},
 		}
+		counters := snapshot[name]
 		result.Samples = append(result.Samples, model.ProfileSample{
-			Values: []int64{int64(entry.calls), int64(entry.usec)},
-			Stack:  []model.ProfileLocationID{id},
+			Values: []int64{saturatingScale(counters.Calls, 1), saturatingScale(counters.Microseconds, 1000)},
+			Stack:  []model.ProfileLocationID{locationID},
 		})
-		id++
 	}
 	return result
+}
+
+func saturatingScale(value, scale uint64) int64 {
+	if value > uint64(math.MaxInt64)/scale {
+		return math.MaxInt64
+	}
+	return int64(value * scale)
 }

@@ -11,8 +11,6 @@ type Model struct {
 	KeyMap KeyMap
 
 	cursor                 int
-	showSeparators         bool
-	separator              string
 	showOverflowIndicators bool
 	leftOverflowIndicator  string
 	rightOverflowIndicator string
@@ -51,7 +49,6 @@ type Style struct {
 	Item              lipgloss.Style
 	Selected          lipgloss.Style
 	OverflowIndicator lipgloss.Style
-	Separator         lipgloss.Style
 }
 
 // DefaultStyles returns styles derived from the default theme.
@@ -65,8 +62,6 @@ func DefaultStyles() Style {
 			BorderBottom(true).
 			BorderForeground(styles.Zakura.NodeHot),
 		OverflowIndicator: lipgloss.NewStyle().
-			Foreground(styles.Zakura.Border),
-		Separator: lipgloss.NewStyle().
 			Foreground(styles.Zakura.Border),
 	}
 }
@@ -85,7 +80,6 @@ func NewModel(items []string, opts ...Option) Model {
 		styles:                 DefaultStyles(),
 		leftOverflowIndicator:  "<",
 		rightOverflowIndicator: ">",
-		separator:              "|",
 	}
 
 	for _, opt := range opts {
@@ -104,16 +98,6 @@ func WithOverflowIndicators(indicators ...string) Option {
 		}
 		if len(indicators) > 1 {
 			m.rightOverflowIndicator = indicators[1]
-		}
-	}
-}
-
-// WithSeparators enables separators between items.
-func WithSeparators(sep ...string) Option {
-	return func(m *Model) {
-		m.showSeparators = true
-		if len(sep) > 0 {
-			m.separator = sep[0]
 		}
 	}
 }

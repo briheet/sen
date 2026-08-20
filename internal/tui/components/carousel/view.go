@@ -23,14 +23,10 @@ func (m Model) View() string {
 }
 
 func (m Model) render(start, end int) string {
-	separator := " "
-	if m.showSeparators {
-		separator = m.styles.Separator.Render(" " + m.separator + " ")
-	}
 	items := make([]string, 0, 2*(end-start)-1)
 	for index := start; index < end; index++ {
 		if index > start {
-			items = append(items, separator)
+			items = append(items, " ")
 		}
 		items = append(items, m.itemView(index))
 	}
@@ -86,11 +82,7 @@ func (m Model) itemAt(x int) int {
 		}
 		x -= width
 		if index < end-1 {
-			separatorWidth := 1
-			if m.showSeparators {
-				separatorWidth = lipgloss.Width(m.styles.Separator.Render(" " + m.separator + " "))
-			}
-			x -= separatorWidth
+			x--
 		}
 	}
 	return -1

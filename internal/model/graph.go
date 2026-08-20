@@ -203,12 +203,12 @@ func (g *RuntimeGraph) Snapshot() RuntimeSnapshot {
 		FileEdges:    make(map[FileEdge]int64, len(g.FileEdges)),
 	}
 	for id, node := range g.Nodes {
-		if activity := traceActivity(node.Metrics); activity > 0 {
+		if activity := codeActivity(node.Metrics); activity > 0 {
 			result.NodeActivity[id] = activity
 		}
 	}
 	for id, file := range g.Files {
-		if activity := traceActivity(file.Metrics); activity > 0 {
+		if activity := codeActivity(file.Metrics); activity > 0 {
 			result.FileActivity[id] = activity
 		}
 	}
@@ -217,14 +217,13 @@ func (g *RuntimeGraph) Snapshot() RuntimeSnapshot {
 	return result
 }
 
-func traceActivity(metrics CodeMetrics) int64 {
-	var activity int64
-	for metric, cost := range metrics {
-		if metric.Source == TraceSource {
-			activity += cost.Cumulative
+func codeActivity(metrics CodeMetrics) int64 {
+	for _, cost := range metrics {
+		if cost.Self > 0 || cost.Cumulative > 0 {
+			return 1
 		}
 	}
-	return activity
+	return 0
 }
 
 func cloneMetrics(source RuntimeMetrics) RuntimeMetrics {

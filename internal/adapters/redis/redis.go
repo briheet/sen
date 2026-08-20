@@ -1,4 +1,4 @@
-// Package redis integrates observation of a running Redis server with Senbon.
+// Package redis adapts a running Redis server to sen's analysis/runtime API.
 package redis
 
 import (
@@ -10,17 +10,17 @@ import (
 	"github.com/briheet/sen/internal/model"
 )
 
-// Adapter observes a running Redis server.
+// Adapter provides a synthetic command graph and a read-only live collector.
 type Adapter struct{}
 
 var _ adapters.Application = (*Adapter)(nil)
 
 // Analyze returns the synthetic Redis command graph.
-func (*Adapter) Analyze(ctx context.Context, source string, buildArgs []string) (*model.StaticGraph, string, error) {
+func (*Adapter) Analyze(context.Context, string, []string) (*model.StaticGraph, string, error) {
 	return analysis.BuildGraph(), analysis.ModulePath, nil
 }
 
 // Open dials the running Redis server at the given address.
-func (*Adapter) Open(ctx context.Context, source string, buildArgs, runArgs []string, output adapters.Output) (adapters.Runtime, error) {
-	return targetruntime.NewCollector(source), nil
+func (*Adapter) Open(_ context.Context, address string, _, _ []string, _ adapters.Output) (adapters.Runtime, error) {
+	return targetruntime.NewCollector(address), nil
 }

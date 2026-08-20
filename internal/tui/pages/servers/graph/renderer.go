@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
-	"image/color"
 	"image/png"
 	"io"
 	"strings"
@@ -19,8 +18,7 @@ import (
 )
 
 const (
-	maxPooledRenderNodes  = 4096
-	maxPooledRenderPixels = 2_000_000
+	maxPooledRenderNodes = 4096
 )
 
 type renderRequest struct {
@@ -78,9 +76,10 @@ type renderer struct {
 	latest    atomic.Uint64
 	start     sync.Once
 
-	output bytes.Buffer
-	chunks kittyChunkWriter
-	png    encoderBufferPool
+	output  bytes.Buffer
+	chunks  kittyChunkWriter
+	png     encoderBufferPool
+	surface renderSurface
 }
 
 type encoderBufferPool struct{ buffer *png.EncoderBuffer }
@@ -96,7 +95,6 @@ type renderSurface struct {
 }
 
 var renderNodes = sync.Pool{New: func() any { return new(renderNodeBuffer) }}
-var renderSurfaces = sync.Pool{New: func() any { return new(renderSurface) }}
 
 func (p *encoderBufferPool) Get() *png.EncoderBuffer {
 	buffer := p.buffer
@@ -191,8 +189,7 @@ func releaseRenderNodes(buffer *renderNodeBuffer) {
 func (r *renderer) render(request *renderRequest) error {
 	r.output.Reset()
 	bounds := image.Rect(0, 0, request.width*request.cellWidth, request.height*request.cellHeight)
-	surface := acquireRenderSurface(bounds, r.palette.colors)
-	defer releaseRenderSurface(surface)
+	surface := r.renderSurface(bounds)
 	r.renderImage(request, surface.canvas)
 	if request.obscured {
 		softenRenderSurface(surface, &r.palette)
@@ -251,22 +248,14 @@ func (r *renderer) encodeImage(source image.Image, options *kitty.Options) error
 	return nil
 }
 
-func acquireRenderSurface(bounds image.Rectangle, palette color.Palette) *renderSurface {
-	surface := renderSurfaces.Get().(*renderSurface)
+func (r *renderer) renderSurface(bounds image.Rectangle) *renderSurface {
+	surface := &r.surface
 	if surface.canvas == nil || surface.canvas.Bounds() != bounds {
-		surface.canvas = image.NewPaletted(bounds, palette)
+		surface.canvas = image.NewPaletted(bounds, r.palette.colors)
 	} else {
-		surface.canvas.Palette = palette
+		surface.canvas.Palette = r.palette.colors
 	}
 	return surface
-}
-
-func releaseRenderSurface(surface *renderSurface) {
-	// Avoid retaining an unusually large terminal surface through the pool.
-	if surface == nil || surface.canvas == nil || len(surface.canvas.Pix) > maxPooledRenderPixels {
-		return
-	}
-	renderSurfaces.Put(surface)
 }
 
 // softenRenderSurface applies a separable box blur and lowers graph contrast.

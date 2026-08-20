@@ -1,0 +1,8 @@
+[project]
+name = "redis-example"
+
+[[services]]
+name = "cache"
+type = "kv"
+provider = "redis"
+address = "127.0.0.1:6379"

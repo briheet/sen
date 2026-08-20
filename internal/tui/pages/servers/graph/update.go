@@ -1,7 +1,6 @@
 package graph
 
 import (
-	"math"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -106,8 +105,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Paint native labels before placing graph pixels beneath them.
 		return m, nextUpload(m.owner, m.width, m.height)
 	case uploadMsg:
-		if msg.owner != m.owner || msg.width != m.width || msg.height != m.height || !m.visible {
+		if msg.owner != m.owner {
 			return m, nil
+		}
+		m.uploadScheduled = false
+		if msg.width != m.width || msg.height != m.height || !m.visible {
+			return m, nil
+		}
+		// Pointer traffic can keep the renderer dirty continuously, delaying the
+		// separate animation timer. Advance linked nodes here so every displayed
+		// drag frame reflects the latest force response.
+		if m.dragging >= 0 && m.animating {
+			m.advanceSimulation(draggingStepsPerFrame)
 		}
 		return m, m.upload()
 	case renderReadyMsg:
@@ -128,7 +137,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.renderPending = false
 			releaseRenderNodes(frame.buffer)
 			if m.dirty {
-				return m, m.upload()
+				return m, m.scheduleUpload()
 			}
 			if m.animating {
 				return m, nextFrame(m.owner, m.generation)
@@ -172,9 +181,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		} else if msg.Button != tea.MouseWheelUp {
 			return m, nil
 		}
-		m.camera.zoomAt(m.mousePixel(msg.X, msg.Y), factor)
-		m.dirty = true
-		return m, m.upload()
+		if !m.camera.zoomAt(m.mousePixel(msg.X, msg.Y), factor) {
+			return m, nil
+		}
+		return m, m.scheduleUpload()
 	case tea.MouseClickMsg:
 		if !m.graphics || !m.visible || msg.Button != tea.MouseLeft {
 			return m, nil
@@ -192,13 +202,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		pointer := m.mousePixel(msg.X, msg.Y)
 		if m.pressed >= 0 && msg.Button == tea.MouseLeft {
 			if m.dragging < 0 && distance(pointer, m.pressPoint) >= float64(min(m.cellWidth, m.cellHeight)) {
-				m.startDrag(pointer)
+				m.startDrag()
 			}
 			if m.dragging >= 0 {
 				m.moveDragged(pointer)
 				m.pointerMoved = true
-				m.dirty = true
-				return m, m.upload()
+				return m, m.scheduleUpload()
 			}
 		}
 		if m.panning && msg.Button == tea.MouseLeft {
@@ -206,14 +215,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.camera.pan(delta)
 			m.lastPointer = pointer
 			m.pointerMoved = m.pointerMoved || delta != (point{})
-			m.dirty = true
-			return m, m.upload()
+			return m, m.scheduleUpload()
 		}
 		hovered := m.hitNode(pointer)
 		if hovered != m.hovered {
 			m.hovered = hovered
-			m.dirty = true
-			return m, m.upload()
+			return m, m.scheduleUpload()
 		}
 	case tea.MouseReleaseMsg:
 		if !m.graphics || !m.visible || msg.Button != tea.MouseLeft {
@@ -228,34 +235,31 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.dragging, m.pressed = -1, -1
 			m.simulation.cool()
 			m.animating = true
-			m.dirty = true
-			return m, m.upload()
+			return m, m.scheduleUpload()
 		case m.pressed >= 0:
 			selected := m.pressed
 			m.pressed = -1
 			m.selected = selected
-			m.dirty = true
-			return m, m.upload()
+			return m, m.scheduleUpload()
 		case m.panning:
 			m.panning = false
 			if !m.pointerMoved {
 				m.selected = -1
-				m.dirty = true
-				return m, m.upload()
 			}
+			// Replace the low-resolution interaction frame with full quality.
+			return m, m.scheduleUpload()
 		}
 	case frameMsg:
 		if msg.owner != m.owner || msg.generation != m.generation || !m.animating {
 			return m, nil
 		}
-		settled := false
-		// The simulation stays at 60 Hz while image uploads are capped at 30 FPS.
-		for range 2 {
-			settled = m.simulation.step(m.nodes, m.edges)
-			if settled {
-				break
-			}
+		steps := settlingStepsPerFrame
+		if m.dragging >= 0 {
+			steps = draggingStepsPerFrame
 		}
+		// Advance several physics ticks per displayed frame so linked nodes keep
+		// pace without increasing PNG uploads or terminal traffic.
+		settled := m.advanceSimulation(steps)
 		if settled && m.dragging < 0 {
 			m.animating = false
 		}
@@ -269,6 +273,30 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, m.upload()
 	}
 	return m, nil
+}
+
+func (m *Model) advanceSimulation(steps int) bool {
+	settled := false
+	for range steps {
+		settled = m.simulation.step(m.nodes, m.edges)
+		if settled {
+			break
+		}
+	}
+	return settled
+}
+
+// scheduleUpload coalesces high-frequency pointer input behind one frame
+// deadline. The latest state wins, so interaction remains responsive without
+// encoding a complete PNG for every mouse event.
+func (m *Model) scheduleUpload() tea.Cmd {
+	m.dirty = true
+	if !m.graphics || !m.visible || m.renderPending || m.uploadScheduled ||
+		len(m.nodes) == 0 || m.width == 0 || m.height == 0 {
+		return nil
+	}
+	m.uploadScheduled = true
+	return nextUpload(m.owner, m.width, m.height)
 }
 
 func (m *Model) resize(width, height int) {
@@ -289,7 +317,7 @@ func (m *Model) resize(width, height int) {
 	m.refreshLabels(true)
 }
 
-func (m *Model) startDrag(pointer point) {
+func (m *Model) startDrag() {
 	if m.pressed < 0 {
 		return
 	}
@@ -333,8 +361,7 @@ func (m Model) hitNode(pointer point) int {
 }
 
 func (m Model) nodePixelRadius(node node) float64 {
-	zoomScale := clamp(math.Sqrt(m.camera.zoom), 0.75, 1.5)
-	return m.nodeRadius * node.scale * zoomScale
+	return m.nodeRadius * node.scale * nodeZoomScale(m.camera.zoom)
 }
 
 func clamp(value, minimum, maximum float64) float64 {

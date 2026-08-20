@@ -20,8 +20,6 @@ import (
 // enginesDoneMsg closes the TUI after every configured process exits.
 type enginesDoneMsg struct{}
 
-// TODO: After Redis gets added, remove services passed in this
-// and use the engine config to switch on types.
 func initialModel(engines []*engine.Engine, services []config.Service, logPath string, dump io.Writer) model {
 	pageModels := make([]pages.Page, 0, len(services))
 	targets := make(map[string]*engine.Engine, len(engines))
@@ -43,7 +41,7 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 			if target == nil {
 				page = kv.FromService(service)
 			} else {
-				page = kv.New(target)
+				page = kv.New(target, dump)
 			}
 		default:
 			continue

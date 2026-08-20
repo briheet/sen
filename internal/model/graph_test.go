@@ -150,3 +150,18 @@ func TestTraceEdgesFollowCallerToCalleeOrder(t *testing.T) {
 	}, nodes)
 	require.Equal(t, map[FileEdge]int64{{From: 1, To: 2}: 1}, files)
 }
+
+func TestSnapshotIncludesProfileActivity(t *testing.T) {
+	graph := &RuntimeGraph{
+		Nodes: map[NodeID]*Node{
+			1: {Metrics: CodeMetrics{
+				Metric{Source: "redis", Name: "calls", Unit: "count"}: {Self: 3, Cumulative: 3},
+			}},
+		},
+		Files:     make(map[FileID]*File),
+		NodeEdges: make(map[NodeEdge]int64),
+		FileEdges: make(map[FileEdge]int64),
+	}
+
+	require.Equal(t, int64(1), graph.Snapshot().NodeActivity[1])
+}
