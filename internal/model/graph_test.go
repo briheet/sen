@@ -165,3 +165,21 @@ func TestSnapshotIncludesProfileActivity(t *testing.T) {
 
 	require.Equal(t, int64(1), graph.Snapshot().NodeActivity[1])
 }
+
+func TestTigerBeetleMetricMapsAreIsolated(t *testing.T) {
+	static := &StaticGraph{Nodes: make(map[NodeID]*StaticNode), Files: make(map[FileID]*StaticFile), Packages: make(map[PackageID]*Package)}
+	graph := BuildRuntimeGraph("", static)
+	source := &RuntimeMetrics{TigerBeetle: TigerBeetleMetrics{
+		Replicas:   map[uint32]TigerBeetleReplicaMetrics{0: {View: 7}},
+		Operations: map[string]TigerBeetleOperationMetrics{"create_accounts": {Requests: 3}},
+	}}
+	graph.ApplyUpdate(graph.BuildUpdate(source, nil, nil))
+	source.TigerBeetle.Replicas[0] = TigerBeetleReplicaMetrics{View: 99}
+	source.TigerBeetle.Operations["create_accounts"] = TigerBeetleOperationMetrics{Requests: 99}
+
+	snapshot := graph.Snapshot()
+	require.Equal(t, uint64(7), snapshot.Metrics.TigerBeetle.Replicas[0].View)
+	require.Equal(t, uint64(3), snapshot.Metrics.TigerBeetle.Operations["create_accounts"].Requests)
+	snapshot.Metrics.TigerBeetle.Replicas[0] = TigerBeetleReplicaMetrics{View: 42}
+	require.Equal(t, uint64(7), graph.Snapshot().Metrics.TigerBeetle.Replicas[0].View)
+}

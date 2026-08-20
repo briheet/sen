@@ -42,6 +42,13 @@ name = "database"
 type = "db"
 provider = "postgres"
 address = " postgres://sen:sen@localhost:5432/sen "
+
+[[services]]
+name = "ledger"
+type = "db"
+provider = "tigerbeetle"
+addresses = [" 127.0.0.1:3000 ", "127.0.0.1:3001"]
+metrics_address = " 127.0.0.1:8125 "
 `)
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 
@@ -66,6 +73,7 @@ address = " postgres://sen:sen@localhost:5432/sen "
 		},
 		{Name: "cache", Type: ServiceTypeKV, Provider: ServiceProviderRedis, Address: "localhost:6379"},
 		{Name: "database", Type: ServiceTypeDB, Provider: ServiceProviderPostgres, Address: "postgres://sen:sen@localhost:5432/sen"},
+		{Name: "ledger", Type: ServiceTypeDB, Provider: ServiceProviderTigerBeetle, Addresses: []string{"127.0.0.1:3000", "127.0.0.1:3001"}, MetricsAddress: "127.0.0.1:8125"},
 	}, result.Services)
 }
 
@@ -100,6 +108,11 @@ func TestLoadErrors(t *testing.T) {
 		{name: "db missing provider", content: validConfig("name = \"database\"\ntype = \"db\"\naddress = \"localhost:5432\""), want: "requires provider"},
 		{name: "db missing address", content: validConfig("name = \"database\"\ntype = \"db\"\nprovider = \"postgres\""), want: "requires address"},
 		{name: "db with kv provider", content: validConfig("name = \"database\"\ntype = \"db\"\nprovider = \"redis\"\naddress = \"localhost:5432\""), want: "unsupported provider"},
+		{name: "tigerbeetle missing addresses", content: validConfig("name = \"ledger\"\ntype = \"db\"\nprovider = \"tigerbeetle\"\nmetrics_address = \"127.0.0.1:8125\""), want: "requires addresses"},
+		{name: "tigerbeetle missing metrics", content: validConfig("name = \"ledger\"\ntype = \"db\"\nprovider = \"tigerbeetle\"\naddresses = [\"127.0.0.1:3000\"]"), want: "requires metrics_address"},
+		{name: "tigerbeetle hostname metrics", content: validConfig("name = \"ledger\"\ntype = \"db\"\nprovider = \"tigerbeetle\"\naddresses = [\"127.0.0.1:3000\"]\nmetrics_address = \"localhost:8125\""), want: "IP:port"},
+		{name: "tigerbeetle duplicate address", content: validConfig("name = \"ledger\"\ntype = \"db\"\nprovider = \"tigerbeetle\"\naddresses = [\"127.0.0.1:3000\", \"127.0.0.1:3000\"]\nmetrics_address = \"127.0.0.1:8125\""), want: "duplicate address"},
+		{name: "tigerbeetle with single address", content: validConfig("name = \"ledger\"\ntype = \"db\"\nprovider = \"tigerbeetle\"\naddress = \"127.0.0.1:3000\"\naddresses = [\"127.0.0.1:3000\"]\nmetrics_address = \"127.0.0.1:8125\""), want: "cannot define address"},
 	}
 
 	for _, test := range tests {

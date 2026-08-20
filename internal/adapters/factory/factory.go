@@ -9,6 +9,7 @@ import (
 	nodeadapter "github.com/briheet/sen/internal/adapters/node"
 	postgresadapter "github.com/briheet/sen/internal/adapters/postgres"
 	redisadapter "github.com/briheet/sen/internal/adapters/redis"
+	tigerbeetleadapter "github.com/briheet/sen/internal/adapters/tigerbeetle"
 )
 
 // ErrUnsupportedTarget reports an unknown language.
@@ -25,6 +26,8 @@ func Application(language string) (adapters.Application, error) {
 		return new(redisadapter.Adapter), nil
 	case adapters.PostgresTarget:
 		return new(postgresadapter.Adapter), nil
+	case adapters.TigerBeetleTarget:
+		return new(tigerbeetleadapter.Adapter), nil
 	default:
 		return nil, ErrUnsupportedTarget
 	}
