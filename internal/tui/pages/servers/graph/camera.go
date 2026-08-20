@@ -4,9 +4,12 @@ import "math"
 
 const (
 	minimumZoom = 0.25
-	maximumZoom = 4.0
+	maximumZoom = 8.0
 	zoomStep    = 1.15
 	fitPadding  = 0.08
+
+	minimumNodeZoomScale = 0.75
+	maximumNodeZoomScale = 2.25
 )
 
 // camera maps stable world positions onto the current pixel viewport.
@@ -63,14 +66,19 @@ func (c *camera) fit(nodes []node) {
 	c.zoom = clamp(c.zoom, minimumZoom, maximumZoom)
 }
 
-func (c *camera) zoomAt(screen point, factor float64) {
+func (c *camera) zoomAt(screen point, factor float64) bool {
 	world := c.screenToWorld(screen)
-	c.zoom = clamp(c.zoom*factor, minimumZoom, maximumZoom)
+	next := clamp(c.zoom*factor, minimumZoom, maximumZoom)
+	if next == c.zoom {
+		return false
+	}
+	c.zoom = next
 	c.center = point{
 		x: world.x - (screen.x-c.width/2)/c.zoom,
 		y: world.y - (screen.y-c.height/2)/c.zoom,
 	}
 	c.manual = true
+	return true
 }
 
 func (c *camera) pan(delta point) {
@@ -80,4 +88,8 @@ func (c *camera) pan(delta point) {
 	c.center.x -= delta.x / c.zoom
 	c.center.y -= delta.y / c.zoom
 	c.manual = true
+}
+
+func nodeZoomScale(zoom float64) float64 {
+	return clamp(math.Sqrt(zoom), minimumNodeZoomScale, maximumNodeZoomScale)
 }

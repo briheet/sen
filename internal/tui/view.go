@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -18,7 +20,7 @@ func (m *model) refreshView() {
 
 	width := max(0, m.width)
 	bodyHeight := max(0, m.height-1)
-	body := lipgloss.NewStyle().Width(width).Height(bodyHeight).Render(view.Content)
+	body := fitBody(view.Content, width, bodyHeight)
 	if panel := m.statusbar.HelpView(); panel != "" {
 		canvas := lipgloss.NewCanvas(width, bodyHeight)
 		canvas.Compose(lipgloss.NewCompositor(
@@ -32,12 +34,27 @@ func (m *model) refreshView() {
 	bar := m.statusbar.View()
 
 	// Pages own the remaining viewport; Kitty pixels are placed behind this text.
-	layout := lipgloss.JoinVertical(lipgloss.Left, body, bar)
-	view.Content = lipgloss.NewStyle().
-		Width(m.width).
-		Height(m.height).
-		Render(layout)
+	var content strings.Builder
+	content.Grow(len(body) + len(bar) + 1)
+	content.WriteString(body)
+	if bodyHeight > 0 {
+		content.WriteByte('\n')
+	}
+	if m.height > 0 {
+		content.WriteString(bar)
+	}
+	view.Content = content.String()
 	view.AltScreen = true
 	view.WindowTitle = "sen"
 	m.view = view
+}
+
+func fitBody(content string, width, height int) string {
+	if height == 0 {
+		return ""
+	}
+	if lipgloss.Width(content) == width && lipgloss.Height(content) == height {
+		return content
+	}
+	return lipgloss.NewStyle().Width(width).Height(height).Render(content)
 }

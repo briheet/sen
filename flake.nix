@@ -10,6 +10,7 @@
       default = pkgs.mkShell {
         packages = with pkgs; [
           go
+          redis
         ];
       };
     }) inputs.nixpkgs.legacyPackages;

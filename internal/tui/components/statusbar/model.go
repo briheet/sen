@@ -71,7 +71,6 @@ func defaultStyle(theme styles.Theme) Style {
 			Item:              lipgloss.NewStyle().Foreground(theme.TextMuted).Padding(0, 1),
 			Selected:          lipgloss.NewStyle().Foreground(theme.Primary).Reverse(true).Bold(true).Padding(0, 1),
 			OverflowIndicator: separator,
-			Separator:         separator,
 		},
 		Help: help.Styles{
 			Ellipsis:       separator,

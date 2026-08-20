@@ -13,13 +13,18 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestNewRequiresRunnableService(t *testing.T) {
+func TestNewBuildsRedisService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	configuration := &config.Config{
 		Project:  config.Project{Name: "test"},
 		Services: []config.Service{{Name: "cache", Type: config.ServiceTypeKV, Provider: config.ServiceProviderRedis, Address: "localhost:6379"}},
 	}
-	_, err := New(context.Background(), configuration)
-	require.ErrorIs(t, err, errNoRunnableServices)
+	group, err := New(context.Background(), configuration)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, group.Cleanup()) })
+	require.Len(t, group.Engines, 1)
+	require.Equal(t, "cache", group.Engines[0].Service.Name)
+	require.NotNil(t, group.Engines[0].Graph)
 }
 
 func TestGroupRunWaitsForAll(t *testing.T) {

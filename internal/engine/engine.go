@@ -28,22 +28,29 @@ type Engine struct {
 
 // NewEngine resolves, analyzes, and opens a configured service.
 func NewEngine(ctx context.Context, service config.Service, output adapters.Output) (*Engine, error) {
-	if err := helpers.ValidateSourcePath(service.Path); err != nil {
-		return nil, err
+	target := string(service.Lang)
+	source := service.Path
+	if service.Type == config.ServiceTypeKV {
+		target = string(service.Provider)
+		source = service.Address
+	} else {
+		if err := helpers.ValidateSourcePath(source); err != nil {
+			return nil, err
+		}
 	}
-	application, err := factory.Application(string(service.Lang))
+	application, err := factory.Application(target)
 	if err != nil {
 		return nil, err
 	}
-	static, namespace, err := application.Analyze(ctx, service.Path, service.BuildArgs)
+	static, namespace, err := application.Analyze(ctx, source, service.BuildArgs)
 	if err != nil {
 		return nil, err
 	}
-	target, err := application.Open(ctx, service.Path, service.BuildArgs, service.RunArgs, output)
+	runtime, err := application.Open(ctx, source, service.BuildArgs, service.RunArgs, output)
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{Service: service, Runtime: target, Graph: model.BuildRuntimeGraph(namespace, static)}, nil
+	return &Engine{Service: service, Runtime: runtime, Graph: model.BuildRuntimeGraph(namespace, static)}, nil
 }
 
 // Start launches the target application.

@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	framesPerSecond = 30
-	maxImageID      = 1<<24 - 1
-	baseNodeRadius  = 6.0
+	framesPerSecond       = 60
+	settlingStepsPerFrame = 4
+	draggingStepsPerFrame = 3
+	maxImageID            = 1<<24 - 1
+	baseNodeRadius        = 6.0
 )
 
 var imageIDs atomic.Uint32
@@ -66,53 +68,54 @@ type labelScratch struct {
 
 // Model contains the graph layout, motion, and drag state.
 type Model struct {
-	renderErr      error
-	dump           io.Writer
-	renderer       *renderer
-	owner          string
-	labels         string
-	nodes          []node
-	edges          []edgeModel
-	simulation     simulation
-	camera         camera
-	renderedCamera camera
-	dragOffset     point
-	pressPoint     point
-	lastPointer    point
-	pressed        int
-	dragging       int
-	selected       int
-	hovered        int
-	height         int
-	width          int
-	cellHeight     int
-	cellWidth      int
-	root           int
-	originX        int
-	originY        int
-	generation     uint64
-	renderSequence uint64
-	renderHash     uint64
-	revision       uint64
-	frontImageID   uint32
-	imageIDs       [2]uint32
-	labelsDragging int
-	labelsSelected int
-	labelsHovered  int
-	renderedDrag   int
-	renderedSelect int
-	renderedHover  int
-	nodeRadius     float64
-	kind           Kind
-	graphics       bool
-	obscured       bool
-	animating      bool
-	panning        bool
-	pointerMoved   bool
-	visible        bool
-	renderPending  bool
-	dirty          bool
-	labelScratch   labelScratch
+	renderErr       error
+	dump            io.Writer
+	renderer        *renderer
+	owner           string
+	labels          string
+	nodes           []node
+	edges           []edgeModel
+	simulation      simulation
+	camera          camera
+	renderedCamera  camera
+	dragOffset      point
+	pressPoint      point
+	lastPointer     point
+	pressed         int
+	dragging        int
+	selected        int
+	hovered         int
+	height          int
+	width           int
+	cellHeight      int
+	cellWidth       int
+	root            int
+	originX         int
+	originY         int
+	generation      uint64
+	renderSequence  uint64
+	renderHash      uint64
+	revision        uint64
+	frontImageID    uint32
+	imageIDs        [2]uint32
+	labelsDragging  int
+	labelsSelected  int
+	labelsHovered   int
+	renderedDrag    int
+	renderedSelect  int
+	renderedHover   int
+	nodeRadius      float64
+	kind            Kind
+	graphics        bool
+	obscured        bool
+	animating       bool
+	panning         bool
+	pointerMoved    bool
+	visible         bool
+	renderPending   bool
+	uploadScheduled bool
+	dirty           bool
+	labelScratch    labelScratch
 }
 
 // New builds the selected graph from analyzed project code.
@@ -417,7 +420,8 @@ func (m Model) trace(format string, values ...any) {
 }
 
 func distance(first, second point) float64 {
-	return math.Hypot(second.x-first.x, second.y-first.y)
+	dx, dy := second.x-first.x, second.y-first.y
+	return math.Sqrt(dx*dx + dy*dy)
 }
 
 func nextImageID() uint32 {

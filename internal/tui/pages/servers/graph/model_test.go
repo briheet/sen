@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	redisanalysis "github.com/briheet/sen/internal/adapters/redis/analysis"
 	"github.com/briheet/sen/internal/model"
 	"github.com/briheet/sen/internal/tui/pages"
 	"github.com/briheet/sen/internal/tui/styles"
@@ -87,6 +88,21 @@ func TestTelemetryHighlightsObservedTracePath(t *testing.T) {
 	request := graphRenderRequest(graph)
 	require.Equal(t, 2, edgeClass(&request, graph.edges[0]))
 	require.Equal(t, 1, edgeClass(&request, graph.edges[1]))
+}
+
+func TestHoverHighlightsOnlyTheNode(t *testing.T) {
+	graph := New("api", FunctionGraph, testRuntimeGraph(), nil)
+	request := graphRenderRequest(graph)
+	request.hovered = graph.root
+
+	graph.renderer.classifyNodes(&request)
+	require.Equal(t, uint8(2), graph.renderer.nodeClass[graph.root])
+	for _, edge := range request.edges {
+		require.Equal(t, 1, edgeClass(&request, edge))
+	}
+
+	request.dragging = graph.root
+	require.Equal(t, 2, edgeClass(&request, request.edges[0]))
 }
 
 func TestGraphDisambiguatesDuplicateFunctionNames(t *testing.T) {
@@ -387,6 +403,44 @@ func TestDirectCapsulesStayContinuousAtEverySlope(t *testing.T) {
 	}
 }
 
+func TestCapsuleClipsDistantGeometryToCanvas(t *testing.T) {
+	palette := newGraphPalette(styles.Zakura)
+	canvas := image.NewPaletted(image.Rect(0, 0, 20, 20), palette.colors)
+	drawCapsule(canvas, &palette.active,
+		point{x: 10, y: -1e9}, point{x: 10, y: 1e9}, edgeWidth, 1,
+	)
+
+	for y := range 20 {
+		require.NotZero(t, pixelAlpha(canvas, 10, y), "missing clipped edge at row %d", y)
+	}
+
+	clear(canvas.Pix)
+	drawCapsule(canvas, &palette.active,
+		point{x: -1e9, y: -1e9}, point{x: -1e9, y: 1e9}, edgeWidth, 1,
+	)
+	for _, pixel := range canvas.Pix {
+		require.Zero(t, pixel)
+	}
+}
+
+func TestRedisGraphFitsViewport(t *testing.T) {
+	source := model.BuildRuntimeGraph(redisanalysis.ModulePath, redisanalysis.BuildGraph())
+	graph, _ := New("cache", FunctionGraph, source, nil).Update(visibleViewport(173, 44))
+
+	minimum := point{x: math.Inf(1), y: math.Inf(1)}
+	maximum := point{x: math.Inf(-1), y: math.Inf(-1)}
+	for _, node := range graph.nodes {
+		screen := graph.camera.worldToScreen(node.position)
+		minimum.x, minimum.y = min(minimum.x, screen.x), min(minimum.y, screen.y)
+		maximum.x, maximum.y = max(maximum.x, screen.x), max(maximum.y, screen.y)
+	}
+	require.GreaterOrEqual(t, minimum.x, 0.0)
+	require.GreaterOrEqual(t, minimum.y, 0.0)
+	require.LessOrEqual(t, maximum.x, graph.camera.width)
+	require.LessOrEqual(t, maximum.y, graph.camera.height)
+	require.GreaterOrEqual(t, graph.camera.zoom, minimumLabelZoom)
+}
+
 func TestKittyChunkWriterStreamsPayload(t *testing.T) {
 	payload := bytes.Repeat([]byte("a"), kitty.MaxChunkSize*2+17)
 	options := &kitty.Options{Action: kitty.Transmit, Format: kitty.PNG, Quiet: 2}
@@ -445,6 +499,122 @@ func TestGraphAppliesRenderBackpressure(t *testing.T) {
 	}
 
 	require.IsType(t, renderReadyMsg{}, command())
+}
+
+func TestGraphCoalescesPointerUploads(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	wheel := tea.MouseWheelMsg{X: 20, Y: 8, Button: tea.MouseWheelUp}
+
+	graph, first := graph.Update(wheel)
+	require.NotNil(t, first)
+	require.True(t, graph.uploadScheduled)
+
+	graph, duplicate := graph.Update(wheel)
+	require.Nil(t, duplicate)
+	require.True(t, graph.uploadScheduled)
+	graph, duplicate = graph.Update(uploadMsg{owner: "worker", width: graph.width, height: graph.height})
+	require.Nil(t, duplicate)
+	require.True(t, graph.uploadScheduled)
+
+	graph, render := graph.Update(uploadMsg{owner: graph.owner, width: graph.width, height: graph.height})
+	require.NotNil(t, render)
+	require.False(t, graph.uploadScheduled)
+	require.True(t, graph.renderPending)
+
+	graph, duplicate = graph.Update(wheel)
+	require.Nil(t, duplicate)
+	require.True(t, graph.dirty)
+
+	ready := render()
+	graph, raw := graph.Update(ready)
+	require.NotNil(t, raw)
+	graph, next := graph.Update(raw())
+	require.NotNil(t, next)
+	require.True(t, graph.uploadScheduled)
+	require.False(t, graph.renderPending)
+}
+
+func TestRendererRetainsItsCanvas(t *testing.T) {
+	renderer := newRenderer("api", nil)
+	bounds := image.Rect(0, 0, 80, 40)
+	first := renderer.renderSurface(bounds)
+	pixels := &first.canvas.Pix[0]
+
+	second := renderer.renderSurface(bounds)
+
+	require.Same(t, first, second)
+	require.Equal(t, pixels, &second.canvas.Pix[0])
+}
+
+func TestInteractionDoesNotChangeGraphScale(t *testing.T) {
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	before := graph.visualHash()
+
+	graph.animating = true
+	require.Equal(t, before, graph.visualHash())
+}
+
+func TestActiveEdgeRendersVisibleHalo(t *testing.T) {
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	request := graphRenderRequest(graph)
+	idle := renderCanvas(graph.renderer, request)
+	idlePixels := paintedPixels(idle)
+
+	request.edges[0].active = true
+	hot := renderCanvas(graph.renderer, request)
+
+	require.Greater(t, paintedPixels(hot), idlePixels)
+}
+
+func TestCoalescedDragFrameAdvancesConnectedNodes(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 20))
+	dragged := graph.root
+	edgeIndex := slices.IndexFunc(graph.edges, func(edge edgeModel) bool {
+		return edge.from == dragged || edge.to == dragged
+	})
+	require.GreaterOrEqual(t, edgeIndex, 0)
+	neighbor := graph.edges[edgeIndex].from
+	if neighbor == dragged {
+		neighbor = graph.edges[edgeIndex].to
+	}
+	before := graph.nodes[neighbor].position
+	graph.dragging = dragged
+	graph.nodes[dragged].fixed = true
+	graph.nodes[dragged].position.x += 200
+	graph.simulation.reheat()
+	graph.animating = true
+
+	graph, render := graph.Update(uploadMsg{owner: graph.owner, width: graph.width, height: graph.height})
+
+	require.NotNil(t, render)
+	require.NotEqual(t, before, graph.nodes[neighbor].position)
+	ready := render()
+	graph, raw := graph.Update(ready)
+	graph, _ = graph.Update(raw())
+}
+
+func TestDragSpringStretchesBeforeCatchingUp(t *testing.T) {
+	nodes := []node{
+		{position: point{}, degree: 1, fixed: true},
+		{position: point{x: 200}, degree: 1},
+	}
+	edges := []edgeModel{{from: 0, to: 1, distance: 100}}
+	initialDistance := distance(nodes[0].position, nodes[1].position)
+	elastic := simulation{alpha: dragAlpha, alphaTarget: dragAlpha, elastic: true}
+
+	for range draggingStepsPerFrame {
+		elastic.step(nodes, edges)
+	}
+	firstFrameDistance := distance(nodes[0].position, nodes[1].position)
+	require.Greater(t, firstFrameDistance, edges[0].distance*1.5)
+
+	for range 12 {
+		elastic.step(nodes, edges)
+	}
+	require.Less(t, distance(nodes[0].position, nodes[1].position), firstFrameDistance)
+	require.Less(t, firstFrameDistance, initialDistance)
 }
 
 func pixelAlpha(canvas image.Image, x, y int) uint32 {
@@ -558,6 +728,24 @@ func TestCameraZoomKeepsWorldPointUnderCursor(t *testing.T) {
 	require.InDelta(t, before.x, graph.camera.screenToWorld(cursor).x, 0.001)
 	require.InDelta(t, before.y, graph.camera.screenToWorld(cursor).y, 0.001)
 	require.True(t, graph.camera.manual)
+}
+
+func TestCameraSupportsCloserZoomWithoutChangingZoomOutLimit(t *testing.T) {
+	camera := camera{width: 800, height: 600, zoom: 1}
+	cursor := point{x: 500, y: 250}
+
+	for range 32 {
+		camera.zoomAt(cursor, zoomStep)
+	}
+	require.Equal(t, maximumZoom, camera.zoom)
+	require.Greater(t, nodeZoomScale(maximumZoom), nodeZoomScale(4))
+	require.False(t, camera.zoomAt(cursor, zoomStep))
+
+	for range 64 {
+		camera.zoomAt(cursor, 1/zoomStep)
+	}
+	require.Equal(t, minimumZoom, camera.zoom)
+	require.False(t, camera.zoomAt(cursor, 1/zoomStep))
 }
 
 func TestGraphWheelZoomsAndResetFits(t *testing.T) {
@@ -756,6 +944,37 @@ func BenchmarkGraphLargeUpload(b *testing.B) {
 	b.ReportMetric(float64(wireBytes), "wire-B/frame")
 }
 
+func BenchmarkRedisGraphUpload(b *testing.B) {
+	b.Setenv("TERM", "xterm-ghostty")
+	source := model.BuildRuntimeGraph(redisanalysis.ModulePath, redisanalysis.BuildGraph())
+	graph, _ := New("cache", FunctionGraph, source, nil).Update(visibleViewport(176, 42))
+	graph.cellWidth, graph.cellHeight = rasterCellSize(15, 38)
+	graph.nodeRadius = max(3, float64(graph.cellWidth)*0.65)
+	wireBytes := len(renderOutput(b, &graph))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = renderOutput(b, &graph)
+	}
+	b.ReportMetric(float64(wireBytes), "wire-B/frame")
+}
+
+func BenchmarkRedisGraphInteractionUpload(b *testing.B) {
+	b.Setenv("TERM", "xterm-ghostty")
+	source := model.BuildRuntimeGraph(redisanalysis.ModulePath, redisanalysis.BuildGraph())
+	graph, _ := New("cache", FunctionGraph, source, nil).Update(visibleViewport(176, 42))
+	graph.cellWidth, graph.cellHeight = rasterCellSize(15, 38)
+	graph.nodeRadius = max(3, float64(graph.cellWidth)*0.65)
+	graph.animating = true
+	wireBytes := len(renderOutput(b, &graph))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = renderOutput(b, &graph)
+	}
+	b.ReportMetric(float64(wireBytes), "wire-B/frame")
+}
+
 func BenchmarkGraphBuild(b *testing.B) {
 	source := testRuntimeGraph()
 	b.ReportAllocs()
@@ -833,6 +1052,16 @@ func renderCanvas(renderer *renderer, request renderRequest) *image.Paletted {
 	canvas := image.NewPaletted(bounds, renderer.palette.colors)
 	renderer.renderImage(&request, canvas)
 	return canvas
+}
+
+func paintedPixels(canvas *image.Paletted) int {
+	painted := 0
+	for _, pixel := range canvas.Pix {
+		if pixel != 0 {
+			painted++
+		}
+	}
+	return painted
 }
 
 func kittyPayload(sequence string) []byte {

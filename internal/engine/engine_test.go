@@ -37,6 +37,21 @@ func TestNewEngineBuildsRuntimeGraph(t *testing.T) {
 	require.NotEmpty(t, engine.Graph.Files)
 }
 
+func TestNewEngineBuildsRedisRuntimeGraph(t *testing.T) {
+	target, err := NewEngine(context.Background(), config.Service{
+		Name:     "cache",
+		Type:     config.ServiceTypeKV,
+		Provider: config.ServiceProviderRedis,
+		Address:  "localhost:6379",
+	}, adapters.Output{Stdout: io.Discard, Stderr: io.Discard})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = target.Cleanup() })
+	require.Equal(t, "cache", target.Service.Name)
+	require.NotNil(t, target.Runtime)
+	require.NotNil(t, target.Graph)
+	require.NotEmpty(t, target.Graph.Nodes)
+}
+
 func TestRunCollectsUntilProcessExit(t *testing.T) {
 	runtime := &continuousRuntime{exit: make(chan error, 1)}
 	graph := model.BuildRuntimeGraph("", &model.StaticGraph{
