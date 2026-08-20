@@ -23,6 +23,8 @@ const (
 	RedisTarget = "redis"
 	// PostgresTarget identifies the PostgreSQL adapter.
 	PostgresTarget = "postgres"
+	// TigerBeetleTarget identifies the TigerBeetle adapter.
+	TigerBeetleTarget = "tigerbeetle"
 )
 
 // Analyzer builds a normalized static graph and returns its source namespace.

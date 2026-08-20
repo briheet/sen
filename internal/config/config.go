@@ -3,6 +3,7 @@ package config
 
 import (
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,6 +57,8 @@ const (
 	ServiceProviderRedis ServiceProvider = "redis"
 	// ServiceProviderPostgres identifies a PostgreSQL database service.
 	ServiceProviderPostgres ServiceProvider = "postgres"
+	// ServiceProviderTigerBeetle identifies a TigerBeetle database service.
+	ServiceProviderTigerBeetle ServiceProvider = "tigerbeetle"
 )
 
 // Config describes a sen project and its services.
@@ -71,14 +74,16 @@ type Project struct {
 
 // Service describes one process or external service.
 type Service struct {
-	Name      string          `mapstructure:"name" validate:"required"`
-	Type      ServiceType     `mapstructure:"type" validate:"required,oneof=server kv db"`
-	Lang      ServiceLang     `mapstructure:"lang" validate:"omitempty,oneof=go node"`
-	Provider  ServiceProvider `mapstructure:"provider" validate:"omitempty,oneof=redis postgres"`
-	Path      string          `mapstructure:"path"`
-	Address   string          `mapstructure:"address"`
-	BuildArgs []string        `mapstructure:"build_args"`
-	RunArgs   []string        `mapstructure:"run_args"`
+	Name           string          `mapstructure:"name" validate:"required"`
+	Type           ServiceType     `mapstructure:"type" validate:"required,oneof=server kv db"`
+	Lang           ServiceLang     `mapstructure:"lang" validate:"omitempty,oneof=go node"`
+	Provider       ServiceProvider `mapstructure:"provider" validate:"omitempty,oneof=redis postgres tigerbeetle"`
+	Path           string          `mapstructure:"path"`
+	Address        string          `mapstructure:"address"`
+	Addresses      []string        `mapstructure:"addresses"`
+	MetricsAddress string          `mapstructure:"metrics_address"`
+	BuildArgs      []string        `mapstructure:"build_args"`
+	RunArgs        []string        `mapstructure:"run_args"`
 }
 
 var schema = validator.New(validator.WithRequiredStructEnabled())
@@ -150,6 +155,9 @@ func (c *Config) validate(baseDir string) error {
 			if service.Address != "" {
 				return errors.New("service " + strconv.Quote(service.Name) + " cannot define address")
 			}
+			if len(service.Addresses) != 0 || service.MetricsAddress != "" {
+				return errors.New("service " + strconv.Quote(service.Name) + " cannot define addresses or metrics_address")
+			}
 			if filepath.IsAbs(service.Path) {
 				service.Path = filepath.Clean(service.Path)
 			} else {
@@ -160,8 +168,20 @@ func (c *Config) validate(baseDir string) error {
 				return err
 			}
 		case ServiceTypeDB:
-			if err := validateExternalService(service, ServiceProviderPostgres); err != nil {
-				return err
+			switch service.Provider {
+			case ServiceProviderPostgres:
+				if err := validateExternalService(service, ServiceProviderPostgres); err != nil {
+					return err
+				}
+			case ServiceProviderTigerBeetle:
+				if err := validateTigerBeetle(service); err != nil {
+					return err
+				}
+			default:
+				if service.Provider == "" {
+					return errors.New("service " + strconv.Quote(service.Name) + " requires provider")
+				}
+				return errors.New("service " + strconv.Quote(service.Name) + " has unsupported provider " + strconv.Quote(string(service.Provider)))
 			}
 		default:
 			return errors.New("service " + strconv.Quote(service.Name) + " has unsupported type " + strconv.Quote(string(service.Type)))
@@ -184,11 +204,54 @@ func validateExternalService(service *Service, expected ServiceProvider) error {
 		return errors.New("service " + strconv.Quote(service.Name) + " requires address")
 	}
 	service.Address = strings.TrimSpace(service.Address)
+	if len(service.Addresses) != 0 || service.MetricsAddress != "" {
+		return errors.New("service " + strconv.Quote(service.Name) + " cannot define addresses or metrics_address")
+	}
 	if service.Path != "" {
 		return errors.New("service " + strconv.Quote(service.Name) + " cannot define path")
 	}
 	if len(service.BuildArgs) != 0 || len(service.RunArgs) != 0 {
 		return errors.New("service " + strconv.Quote(service.Name) + " cannot define build_args or run_args")
+	}
+	return nil
+}
+
+func validateTigerBeetle(service *Service) error {
+	name := strconv.Quote(service.Name)
+	if service.Lang != "" {
+		return errors.New("service " + name + " cannot define lang")
+	}
+	if service.Path != "" {
+		return errors.New("service " + name + " cannot define path")
+	}
+	if service.Address != "" {
+		return errors.New("service " + name + " cannot define address")
+	}
+	if len(service.BuildArgs) != 0 || len(service.RunArgs) != 0 {
+		return errors.New("service " + name + " cannot define build_args or run_args")
+	}
+	if len(service.Addresses) == 0 {
+		return errors.New("service " + name + " requires addresses")
+	}
+	seen := make(map[string]struct{}, len(service.Addresses))
+	for index, address := range service.Addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			return errors.New("service " + name + " has an empty address")
+		}
+		if strings.Contains(address, ",") {
+			return errors.New("service " + name + " has an address containing a comma")
+		}
+		if _, exists := seen[address]; exists {
+			return errors.New("service " + name + " has a duplicate address " + strconv.Quote(address))
+		}
+		seen[address] = struct{}{}
+		service.Addresses[index] = address
+	}
+	service.MetricsAddress = strings.TrimSpace(service.MetricsAddress)
+	metricsAddress, err := netip.ParseAddrPort(service.MetricsAddress)
+	if err != nil || metricsAddress.Port() == 0 {
+		return errors.New("service " + name + " requires metrics_address as an IP:port")
 	}
 	return nil
 }

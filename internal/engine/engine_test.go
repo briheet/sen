@@ -52,6 +52,17 @@ func TestNewEngineBuildsRedisRuntimeGraph(t *testing.T) {
 	require.NotEmpty(t, target.Graph.Nodes)
 }
 
+func TestNewEngineBuildsTigerBeetleRuntimeGraph(t *testing.T) {
+	target, err := NewEngine(context.Background(), config.Service{
+		Name: "ledger", Type: config.ServiceTypeDB, Provider: config.ServiceProviderTigerBeetle,
+		Addresses: []string{"127.0.0.1:3000", "127.0.0.1:3001"}, MetricsAddress: "127.0.0.1:8125",
+	}, adapters.Output{Stdout: io.Discard, Stderr: io.Discard})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = target.Cleanup() })
+	require.NotNil(t, target.Runtime)
+	require.Len(t, target.Graph.Static.Nodes, 11)
+}
+
 func TestRunCollectsUntilProcessExit(t *testing.T) {
 	runtime := &continuousRuntime{exit: make(chan error, 1)}
 	graph := model.BuildRuntimeGraph("", &model.StaticGraph{

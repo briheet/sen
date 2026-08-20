@@ -1,0 +1,9 @@
+[project]
+name = "tigerbeetle-example"
+
+[[services]]
+name = "ledger"
+type = "db"
+provider = "tigerbeetle"
+addresses = ["127.0.0.1:3000"]
+metrics_address = "127.0.0.1:8125"

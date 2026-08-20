@@ -240,6 +240,7 @@ func cloneMetrics(source RuntimeMetrics) RuntimeMetrics {
 			Buckets: append([]float64(nil), source.Go.GCPauses.Buckets...),
 		}
 	}
+	result.TigerBeetle = copyTigerBeetle(source.TigerBeetle)
 	return result
 }
 

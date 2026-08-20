@@ -52,7 +52,21 @@ func copyMetrics(source *RuntimeMetrics) *RuntimeMetrics {
 	*target = *source
 	target.Go.SchedulerLatency = copyHistogram(source.Go.SchedulerLatency)
 	target.Go.GCPauses = copyHistogram(source.Go.GCPauses)
+	target.TigerBeetle = copyTigerBeetle(source.TigerBeetle)
 	return target
+}
+
+func copyTigerBeetle(source TigerBeetleMetrics) TigerBeetleMetrics {
+	result := source
+	result.Replicas = make(map[uint32]TigerBeetleReplicaMetrics, len(source.Replicas))
+	for id, replica := range source.Replicas {
+		result.Replicas[id] = replica
+	}
+	result.Operations = make(map[string]TigerBeetleOperationMetrics, len(source.Operations))
+	for operation, metrics := range source.Operations {
+		result.Operations[operation] = metrics
+	}
+	return result
 }
 
 func copyHistogram(source *Histogram) *Histogram {
@@ -68,9 +82,34 @@ func copyHistogram(source *Histogram) *Histogram {
 func assignMetrics(target, source *RuntimeMetrics) {
 	schedulerLatency := target.Go.SchedulerLatency
 	gcPauses := target.Go.GCPauses
+	tigerBeetle := target.TigerBeetle
 	*target = *source
 	target.Go.SchedulerLatency = assignHistogram(schedulerLatency, source.Go.SchedulerLatency)
 	target.Go.GCPauses = assignHistogram(gcPauses, source.Go.GCPauses)
+	assignTigerBeetle(&tigerBeetle, source.TigerBeetle)
+	target.TigerBeetle = tigerBeetle
+}
+
+func assignTigerBeetle(target *TigerBeetleMetrics, source TigerBeetleMetrics) {
+	replicas, operations := target.Replicas, target.Operations
+	if replicas == nil {
+		replicas = make(map[uint32]TigerBeetleReplicaMetrics, len(source.Replicas))
+	} else {
+		clear(replicas)
+	}
+	if operations == nil {
+		operations = make(map[string]TigerBeetleOperationMetrics, len(source.Operations))
+	} else {
+		clear(operations)
+	}
+	for id, replica := range source.Replicas {
+		replicas[id] = replica
+	}
+	for operation, metrics := range source.Operations {
+		operations[operation] = metrics
+	}
+	*target = source
+	target.Replicas, target.Operations = replicas, operations
 }
 
 func assignHistogram(target, source *Histogram) *Histogram {
@@ -141,6 +180,8 @@ func releaseCodeMetrics(metrics CodeMetrics) {
 func releaseMetrics(metrics *RuntimeMetrics) {
 	releaseHistogram(metrics.Go.SchedulerLatency)
 	releaseHistogram(metrics.Go.GCPauses)
+	clear(metrics.TigerBeetle.Replicas)
+	clear(metrics.TigerBeetle.Operations)
 	*metrics = RuntimeMetrics{}
 	metricsUpdates.Put(metrics)
 }

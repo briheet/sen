@@ -151,13 +151,53 @@ type PostgresMetrics struct {
 	StatementsAvailable bool
 }
 
+// TigerBeetleOperationMetrics contains one emitted request window.
+type TigerBeetleOperationMetrics struct {
+	Requests   uint64
+	LatencyMin time.Duration
+	LatencyMax time.Duration
+	LatencyAvg time.Duration
+	LatencySum time.Duration
+}
+
+// TigerBeetleReplicaMetrics contains the latest gauges emitted by one replica.
+type TigerBeetleReplicaMetrics struct {
+	ObservedAt          time.Time
+	Status              uint64
+	SyncStage           uint64
+	View                uint64
+	Operation           uint64
+	Checkpoint          uint64
+	CommitMin           uint64
+	CommitMax           uint64
+	PipelineQueueLength uint64
+	JournalDirty        uint64
+	JournalFaulty       uint64
+	GridBlocksAcquired  uint64
+	GridBlocksMissing   uint64
+	GridCacheHits       uint64
+	GridCacheMisses     uint64
+	Accounts            uint64
+	Transfers           uint64
+}
+
+// TigerBeetleMetrics contains one cluster telemetry window.
+type TigerBeetleMetrics struct {
+	Cluster    string
+	Release    uint64
+	Window     time.Duration
+	Replicas   map[uint32]TigerBeetleReplicaMetrics
+	Operations map[string]TigerBeetleOperationMetrics
+}
+
 // RuntimeMetrics contains one normalized process and runtime snapshot.
 type RuntimeMetrics struct {
-	Process  ProcessMetrics
-	Go       GoMetrics
-	Node     NodeMetrics
-	Redis    RedisMetrics
-	Postgres PostgresMetrics
+	Process     ProcessMetrics
+	Go          GoMetrics
+	Node        NodeMetrics
+	Redis       RedisMetrics
+	Postgres    PostgresMetrics
+	TigerBeetle TigerBeetleMetrics
 }
 
 // EventKind identifies a runtime event.

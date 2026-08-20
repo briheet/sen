@@ -14,6 +14,7 @@ import (
 	"github.com/briheet/sen/internal/tui/pages/db"
 	"github.com/briheet/sen/internal/tui/pages/kv"
 	"github.com/briheet/sen/internal/tui/pages/servers"
+	"github.com/briheet/sen/internal/tui/pages/tigerbeetle"
 	"github.com/briheet/sen/internal/tui/styles"
 	"github.com/stretchr/testify/require"
 )
@@ -29,23 +30,28 @@ func TestModelContainsBuiltEngines(t *testing.T) {
 		engines[1].Service,
 		{Name: "cache", Type: config.ServiceTypeKV, Provider: config.ServiceProviderRedis, Address: "localhost:6379"},
 		{Name: "database", Type: config.ServiceTypeDB, Provider: config.ServiceProviderPostgres, Address: "postgres://localhost/sen"},
+		{Name: "ledger", Type: config.ServiceTypeDB, Provider: config.ServiceProviderTigerBeetle, Addresses: []string{"127.0.0.1:3000"}, MetricsAddress: "127.0.0.1:8125"},
 	}
 	m := initialModel(engines, services, "/cache/sen/project/engine.log", nil)
-	require.Len(t, m.ctx.Pages(), 4)
+	require.Len(t, m.ctx.Pages(), 5)
 	apiPage, _ := m.ctx.Page("api")
 	workerPage, _ := m.ctx.Page("worker")
 	cachePage, _ := m.ctx.Page("cache")
 	databasePage, _ := m.ctx.Page("database")
+	ledgerPage, _ := m.ctx.Page("ledger")
 	api := apiPage.(servers.Model)
 	worker := workerPage.(servers.Model)
 	cache := cachePage.(kv.Model)
 	database := databasePage.(db.Model)
+	ledger := ledgerPage.(tigerbeetle.Model)
 	require.Same(t, engines[0], api.Engine)
 	require.Same(t, engines[1], worker.Engine)
 	require.Equal(t, "localhost:6379", cache.Service.Address)
 	require.Nil(t, cache.Engine)
 	require.Nil(t, database.Engine)
 	require.Equal(t, "postgres://localhost/sen", database.Service.Address)
+	require.Nil(t, ledger.Engine)
+	require.Equal(t, []string{"127.0.0.1:3000"}, ledger.Service.Addresses)
 	require.Equal(t, "api", m.ctx.ActivePage())
 	require.Equal(t, styles.Zakura, m.activeTheme)
 
