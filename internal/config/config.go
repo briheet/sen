@@ -46,6 +46,20 @@ const (
 	ServiceLangGo ServiceLang = "go"
 	// ServiceLangNode identifies the Node.js server adapter.
 	ServiceLangNode ServiceLang = "node"
+	// ServiceLangRust identifies the Rust server adapter.
+	ServiceLangRust ServiceLang = "rust"
+)
+
+// TokioConsoleMode controls how a Rust service exposes Tokio Console data.
+type TokioConsoleMode string
+
+const (
+	// TokioConsoleOff disables Tokio Console collection.
+	TokioConsoleOff TokioConsoleMode = "off"
+	// TokioConsoleInject asks sen to inject console-subscriber initialization into its temporary build.
+	TokioConsoleInject TokioConsoleMode = "inject"
+	// TokioConsoleExisting connects to console-subscriber initialization already owned by the application.
+	TokioConsoleExisting TokioConsoleMode = "existing"
 )
 
 // ServiceProvider identifies an external service implementation.
@@ -71,14 +85,15 @@ type Project struct {
 
 // Service describes one process or external service.
 type Service struct {
-	Name      string          `mapstructure:"name" validate:"required"`
-	Type      ServiceType     `mapstructure:"type" validate:"required,oneof=server kv db"`
-	Lang      ServiceLang     `mapstructure:"lang" validate:"omitempty,oneof=go node"`
-	Provider  ServiceProvider `mapstructure:"provider" validate:"omitempty,oneof=redis postgres"`
-	Path      string          `mapstructure:"path"`
-	Address   string          `mapstructure:"address"`
-	BuildArgs []string        `mapstructure:"build_args"`
-	RunArgs   []string        `mapstructure:"run_args"`
+	Name         string           `mapstructure:"name" validate:"required"`
+	Type         ServiceType      `mapstructure:"type" validate:"required,oneof=server kv db"`
+	Lang         ServiceLang      `mapstructure:"lang" validate:"omitempty,oneof=go node rust"`
+	Provider     ServiceProvider  `mapstructure:"provider" validate:"omitempty,oneof=redis postgres"`
+	Path         string           `mapstructure:"path"`
+	Address      string           `mapstructure:"address"`
+	BuildArgs    []string         `mapstructure:"build_args"`
+	RunArgs      []string         `mapstructure:"run_args"`
+	TokioConsole TokioConsoleMode `mapstructure:"tokio_console" validate:"omitempty,oneof=off inject existing"`
 }
 
 var schema = validator.New(validator.WithRequiredStructEnabled())
@@ -150,6 +165,13 @@ func (c *Config) validate(baseDir string) error {
 			if service.Address != "" {
 				return errors.New("service " + strconv.Quote(service.Name) + " cannot define address")
 			}
+			if service.Lang == ServiceLangRust {
+				if service.TokioConsole == "" {
+					service.TokioConsole = TokioConsoleOff
+				}
+			} else if service.TokioConsole != "" {
+				return errors.New("service " + strconv.Quote(service.Name) + " cannot define tokio_console for lang " + strconv.Quote(string(service.Lang)))
+			}
 			if filepath.IsAbs(service.Path) {
 				service.Path = filepath.Clean(service.Path)
 			} else {
@@ -179,6 +201,9 @@ func validateExternalService(service *Service, expected ServiceProvider) error {
 	}
 	if service.Lang != "" {
 		return errors.New("service " + strconv.Quote(service.Name) + " cannot define lang")
+	}
+	if service.TokioConsole != "" {
+		return errors.New("service " + strconv.Quote(service.Name) + " cannot define tokio_console")
 	}
 	if strings.TrimSpace(service.Address) == "" {
 		return errors.New("service " + strconv.Quote(service.Name) + " requires address")

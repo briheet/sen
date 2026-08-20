@@ -14,6 +14,7 @@ import (
 	"github.com/briheet/sen/internal/tui/pages"
 	"github.com/briheet/sen/internal/tui/pages/db"
 	"github.com/briheet/sen/internal/tui/pages/kv"
+	"github.com/briheet/sen/internal/tui/pages/rust"
 	"github.com/briheet/sen/internal/tui/pages/servers"
 	"github.com/briheet/sen/internal/tui/styles"
 )
@@ -37,7 +38,11 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 			if target == nil {
 				continue
 			}
-			page = servers.New(target, dump)
+			if service.Lang == config.ServiceLangRust {
+				page = rust.New(target, dump)
+			} else {
+				page = servers.New(target, dump)
+			}
 		case config.ServiceTypeKV:
 			if target == nil {
 				page = kv.FromService(service)

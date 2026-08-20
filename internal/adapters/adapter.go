@@ -19,6 +19,8 @@ const (
 	GoTarget = "go"
 	// NodeTarget identifies the Node.js adapter.
 	NodeTarget = "node"
+	// RustTarget identifies the Rust adapter.
+	RustTarget = "rust"
 	// RedisTarget identifies the Redis adapter.
 	RedisTarget = "redis"
 	// PostgresTarget identifies the PostgreSQL adapter.

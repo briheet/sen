@@ -38,7 +38,7 @@ func NewEngine(ctx context.Context, service config.Service, output adapters.Outp
 			return nil, err
 		}
 	}
-	application, err := factory.Application(target)
+	application, err := factory.Application(target, service)
 	if err != nil {
 		return nil, err
 	}

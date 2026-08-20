@@ -1,4 +1,5 @@
-package servers
+// Package rust renders native profiles and Tokio runtime telemetry for Rust services.
+package rust
 
 import (
 	"io"
@@ -9,11 +10,11 @@ import (
 	"github.com/briheet/sen/internal/engine"
 	"github.com/briheet/sen/internal/tui/components/graph"
 	"github.com/briheet/sen/internal/tui/pages"
-	"github.com/briheet/sen/internal/tui/pages/servers/metrics"
+	"github.com/briheet/sen/internal/tui/pages/rust/metrics"
 	"github.com/briheet/sen/internal/tui/styles"
 )
 
-// Model contains the engine state for one server page.
+// Model contains the engine state for one Rust service page.
 type Model struct {
 	Engine *engine.Engine
 
@@ -30,7 +31,7 @@ type Model struct {
 	showMetrics bool
 }
 
-// New creates a server model from a built engine.
+// New creates a Rust page from a built engine.
 func New(target *engine.Engine, dump io.Writer) Model {
 	pager := paginator.New(paginator.WithTotalPages(2))
 	pager.Type = paginator.Dots
@@ -45,7 +46,7 @@ func New(target *engine.Engine, dump io.Writer) Model {
 			graph.New(target.Service.Name+":functions", graph.FunctionGraph, target.Graph, dump),
 			graph.New(target.Service.Name+":files", graph.FileGraph, target.Graph, dump),
 		},
-		metrics: metrics.New(target.Graph, target.Service.Lang),
+		metrics: metrics.New(target.Graph),
 		pager:   pager,
 		pending: -1,
 	}

@@ -6,8 +6,8 @@ import (
 
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
+	"github.com/briheet/sen/internal/tui/components/graph"
 	redismetrics "github.com/briheet/sen/internal/tui/pages/kv/metrics"
-	"github.com/briheet/sen/internal/tui/pages/servers/graph"
 )
 
 // Model contains the command graph and Redis telemetry for one KV service.
