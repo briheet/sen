@@ -77,6 +77,7 @@ func TestActivityAddsOnlySyntheticDatabaseEdge(t *testing.T) {
 }
 
 func TestPageSwitchesViewsFromShiftKeybindings(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
 	static := analysis.BuildGraph(
 		[]analysis.Statement{{QueryID: 42, Query: "SELECT * FROM users"}},
 		[]analysis.Table{{Name: "users"}},

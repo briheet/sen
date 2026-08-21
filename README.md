@@ -6,6 +6,8 @@ memory, and activity are showing up across functions, files, calls, and dependen
 
 Sen currently supports Go and Node.js applications plus Redis and PostgreSQL services:
 
+![Service_graph](./assets/service_graph.png)
+
 - Static call-graph analysis
 - Process and memory measurements
 - CPU profiles and runtime traces
@@ -18,32 +20,60 @@ metrics dashboards.
 The target source is not modified. Adapters instrument each runtime and remove
 their temporary artifacts on exit.
 
-## Usage
+![Service_metrics](./assets/service_metrics.png)
 
-Go 1.25.12 or newer is required to build sen.
+## Installation
+
+Using Nix:
 
 ```sh
-go build -o bin/sen ./cmd/sen
-./bin/sen run
-./bin/sen run ./examples/go/http
+# Try before installing
+nix run github:briheet/sen
+
+# Run a project in the TUI
+nix run github:briheet/sen -- run ./examples/go/postgresredis
+
+# Install
+nix profile install github:briheet/sen
+```
+
+Using Go:
+
+```sh
+# Try before installing
+go run github.com/briheet/sen/cmd/sen@main
+
+# Run a project in the TUI
+go run github.com/briheet/sen/cmd/sen@main run ./examples/go/postgresredis
+
+# Install
+go install github.com/briheet/sen/cmd/sen@main
+```
+
+## Quickstart
+
+Start the example PostgreSQL and Redis services:
+
+```sh
+docker compose -f examples/go/postgresredis/compose.yaml up -d
+```
+
+Build sen from the repository root:
+
+```sh
+go build -trimpath -ldflags='-s -w' -o bin/sen cmd/sen/main.go
+```
+
+Run the example project:
+
+```sh
 ./bin/sen run ./examples/go/postgresredis
-./bin/sen run ./examples/redis
-./bin/sen run ./examples/postgres
-./bin/sen run --config ./config/sen.toml
 ```
 
-Use `-c` as the short form of `--config`.
+## Use Sen with Your Service
 
-Set a built-in theme by slug in `sen.toml`; omitting it uses `zakura`:
-
-```toml
-[project]
-name = "my-backend"
-theme = "catppuccin-mocha"
-```
-
-Use `h` / `l` or the arrow keys to switch between service tabs.
-Press `M` in a service workspace to open its runtime metrics dashboard.
+Ready to use Sen with your own project? See the setup guides for
+[Go services](docs/go.md) and [Node.js services](docs/node.md).
 
 ## License
 
