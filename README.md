@@ -1,6 +1,6 @@
 # Sen
 
-See where your backend spends time—from source functions to Redis commands and PostgreSQL queries—in one live terminal.
+See where your backend spends time, from source functions to Redis commands and PostgreSQL queries, in one live terminal.
 
 Inspired by SenbonZakura, sen maps application code and backing services into a live TUI.
 It combines source analysis with runtime telemetry so you can see where time,
