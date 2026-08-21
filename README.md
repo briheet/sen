@@ -1,5 +1,7 @@
 # Sen
 
+See where your backend spends time—from source functions to Redis commands and PostgreSQL queries—in one live terminal.
+
 Inspired by SenbonZakura, sen maps application code and backing services into a live TUI.
 It combines source analysis with runtime telemetry so you can see where time,
 memory, and activity are showing up across functions, files, calls, and dependencies.
@@ -41,13 +43,13 @@ Using Go:
 
 ```sh
 # Try before installing
-go run github.com/briheet/sen/cmd/sen@main
+go run github.com/briheet/sen/cmd/sen@v0.1.0
 
 # Run a project in the TUI
-go run github.com/briheet/sen/cmd/sen@main run ./examples/go/postgresredis
+go run github.com/briheet/sen/cmd/sen@v0.1.0 run ./examples/go/postgresredis
 
 # Install
-go install github.com/briheet/sen/cmd/sen@main
+go install github.com/briheet/sen/cmd/sen@v0.1.0
 ```
 
 ## Quickstart
