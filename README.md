@@ -1,12 +1,10 @@
 # Sen
 
-See where your backend spends time, from source functions to Redis commands and PostgreSQL queries, in one live terminal.
-
 Inspired by SenbonZakura, sen maps application code and backing services into a live TUI.
 It combines source analysis with runtime telemetry so you can see where time,
 memory, and activity are showing up across functions, files, calls, and dependencies.
 
-Sen currently supports Go and Node.js applications plus Redis and PostgreSQL services:
+Sen currently supports Go and Node.js applications plus Redis and PostgreSQL services.
 
 ![Service_graph](./assets/service_graph.png)
 
@@ -14,13 +12,6 @@ Sen currently supports Go and Node.js applications plus Redis and PostgreSQL ser
 - Process and memory measurements
 - CPU profiles and runtime traces
 - Source-level mapping into a TUI-owned `RuntimeGraph`
-
-Redis workspaces show per-command activity; PostgreSQL workspaces show
-per-statement and per-table activity. Both include provider-specific live
-metrics dashboards.
-
-The target source is not modified. Adapters instrument each runtime and remove
-their temporary artifacts on exit.
 
 ![Service_metrics](./assets/service_metrics.png)
 
