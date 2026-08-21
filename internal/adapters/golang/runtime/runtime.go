@@ -27,8 +27,9 @@ type Runtime struct {
 	Profiles map[string]*runtimepprof.Profile
 	Trace    *runtimetrace.Trace
 
-	client  *http.Client
-	sampler *processstats.Sampler
+	client       *http.Client
+	sampler      *processstats.Sampler
+	traceDecoder runtimetrace.Decoder
 }
 
 var _ adapters.Runtime = (*Runtime)(nil)
@@ -139,7 +140,7 @@ func (r *Runtime) ReadProfile(name string, reader io.Reader) error {
 
 // ReadTrace decodes and stores trace data from the target process.
 func (r *Runtime) ReadTrace(reader io.Reader) error {
-	result, err := runtimetrace.Read(reader)
+	result, err := r.traceDecoder.Read(reader)
 	if err != nil {
 		return err
 	}

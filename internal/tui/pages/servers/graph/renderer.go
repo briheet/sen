@@ -107,10 +107,14 @@ func (p *encoderBufferPool) Put(buffer *png.EncoderBuffer) {
 }
 
 func newRenderer(owner string, dump io.Writer) *renderer {
+	return newRendererWithTheme(owner, dump, styles.Zakura)
+}
+
+func newRendererWithTheme(owner string, dump io.Writer, theme styles.Theme) *renderer {
 	return &renderer{
 		owner:    owner,
 		dump:     dump,
-		palette:  newGraphPalette(styles.Zakura),
+		palette:  newGraphPalette(theme),
 		requests: make(chan renderRequest, 1),
 	}
 }

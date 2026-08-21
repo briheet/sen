@@ -8,6 +8,7 @@ import (
 	"github.com/briheet/sen/internal/engine"
 	redismetrics "github.com/briheet/sen/internal/tui/pages/kv/metrics"
 	"github.com/briheet/sen/internal/tui/pages/servers/graph"
+	"github.com/briheet/sen/internal/tui/styles"
 )
 
 // Model contains the command graph and Redis telemetry for one KV service.
@@ -28,18 +29,28 @@ type Model struct {
 
 // New creates a key-value model from a built engine.
 func New(target *engine.Engine, dump io.Writer) Model {
+	return NewWithTheme(target, dump, styles.Zakura)
+}
+
+// NewWithTheme creates a key-value model using theme.
+func NewWithTheme(target *engine.Engine, dump io.Writer, theme styles.Theme) Model {
 	return Model{
 		Service: target.Service,
 		Engine:  target,
 		dump:    dump,
-		graph:   graph.New(target.Service.Name+":commands", graph.FunctionGraph, target.Graph, dump),
-		metrics: redismetrics.New(target.Graph),
+		graph:   graph.NewWithTheme(target.Service.Name+":commands", graph.FunctionGraph, target.Graph, dump, theme),
+		metrics: redismetrics.NewWithTheme(target.Graph, theme),
 	}
 }
 
 // FromService creates a temporary model for integrations without engines.
 func FromService(service config.Service) Model {
-	return Model{Service: service}
+	return FromServiceWithTheme(service, styles.Zakura)
+}
+
+// FromServiceWithTheme creates a themed placeholder without a live engine.
+func FromServiceWithTheme(service config.Service, theme styles.Theme) Model {
+	return Model{Service: service, metrics: redismetrics.NewWithTheme(nil, theme)}
 }
 
 // Name returns the configured service name.

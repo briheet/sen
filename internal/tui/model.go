@@ -24,7 +24,6 @@ type model struct {
 	// workspace wide keys to work with
 	keys *keys.Model
 
-	// TODO: Please add themes in internal/tui/styles and let people choose at runtime
 	activeTheme styles.Theme // active theme for UI
 
 	// dimensions of the model

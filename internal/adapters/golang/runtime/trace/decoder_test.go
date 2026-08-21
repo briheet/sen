@@ -4,23 +4,16 @@ import (
 	"bytes"
 	"context"
 	"runtime/trace"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestReadRuntimeTrace(t *testing.T) {
-	var data bytes.Buffer
-	require.NoError(t, trace.Start(&data))
+	data := runtimeTrace(t, "example.com/app")
 
-	ctx, task := trace.NewTask(context.Background(), "build")
-	trace.WithRegion(ctx, "compile", func() {
-		trace.Log(ctx, "package", "example.com/app")
-	})
-	task.End()
-	trace.Stop()
-
-	result, err := Read(bytes.NewReader(data.Bytes()))
+	result, err := Read(bytes.NewReader(data))
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Events)
 	require.NotEmpty(t, result.Stacks)
@@ -39,4 +32,78 @@ func TestReadRuntimeTrace(t *testing.T) {
 	require.True(t, taskBegin)
 	require.True(t, regionBegin)
 	require.True(t, logEvent)
+}
+
+func TestDecoderReusesAlternatingBuffers(t *testing.T) {
+	firstData := runtimeTrace(t, "first")
+	secondData := runtimeTrace(t, "second")
+	thirdData := runtimeTrace(t, "third")
+	var decoder Decoder
+
+	first, err := decoder.Read(bytes.NewReader(firstData))
+	require.NoError(t, err)
+	require.True(t, hasLogMessage(first, "first"))
+
+	second, err := decoder.Read(bytes.NewReader(secondData))
+	require.NoError(t, err)
+	require.NotSame(t, first, second)
+	require.True(t, hasLogMessage(first, "first"), "decoding must not mutate the active buffer")
+	require.True(t, hasLogMessage(second, "second"))
+
+	third, err := decoder.Read(bytes.NewReader(thirdData))
+	require.NoError(t, err)
+	require.Same(t, first, third)
+	require.True(t, hasLogMessage(third, "third"))
+	require.False(t, hasLogMessage(third, "first"), "reused buffers must not retain stale events")
+}
+
+func TestDecoderKeepsActiveTraceOnError(t *testing.T) {
+	var decoder Decoder
+	current, err := decoder.Read(bytes.NewReader(runtimeTrace(t, "current")))
+	require.NoError(t, err)
+	events := slices.Clone(current.Events)
+
+	_, err = decoder.Read(bytes.NewReader([]byte("invalid trace")))
+	require.Error(t, err)
+	require.Equal(t, events, current.Events)
+	require.True(t, hasLogMessage(current, "current"))
+}
+
+func BenchmarkDecoder(b *testing.B) {
+	data := runtimeTrace(b, "benchmark")
+	b.Run("stateless", func(b *testing.B) {
+		for range b.N {
+			if _, err := Read(bytes.NewReader(data)); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("reused", func(b *testing.B) {
+		var decoder Decoder
+		for range b.N {
+			if _, err := decoder.Read(bytes.NewReader(data)); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+func runtimeTrace(tb testing.TB, message string) []byte {
+	tb.Helper()
+	var data bytes.Buffer
+	require.NoError(tb, trace.Start(&data))
+
+	ctx, task := trace.NewTask(context.Background(), "build")
+	trace.WithRegion(ctx, "compile", func() {
+		trace.Log(ctx, "package", message)
+	})
+	task.End()
+	trace.Stop()
+	return data.Bytes()
+}
+
+func hasLogMessage(source *Trace, message string) bool {
+	return slices.ContainsFunc(source.Events, func(event Event) bool {
+		return event.Kind == EventLog && event.Category == "package" && event.Message == message
+	})
 }

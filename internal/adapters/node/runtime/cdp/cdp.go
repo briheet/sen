@@ -29,6 +29,14 @@ type Client struct {
 	mu      sync.Mutex
 }
 
+type responseEnvelope struct {
+	ID    uint64 `json:"id"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+	Result json.RawMessage `json:"result"`
+}
+
 // Dial connects to a CDP websocket endpoint.
 func Dial(ctx context.Context, rawURL string) (*Client, error) {
 	parsed, err := url.Parse(rawURL)
@@ -127,26 +135,24 @@ func (c *Client) Call(ctx context.Context, method string, params any, out any) e
 		if !ok {
 			return errors.New("cdp: connection closed")
 		}
-		var envelope struct {
-			ID    uint64 `json:"id"`
-			Error *struct {
-				Message string `json:"message"`
-			} `json:"error"`
-			Result json.RawMessage `json:"result"`
-		}
-		if err := json.Unmarshal(response, &envelope); err != nil {
-			return err
-		}
-		if envelope.Error != nil {
-			return fmt.Errorf("cdp %s: %s", method, envelope.Error.Message)
-		}
-		if out != nil {
-			return json.Unmarshal(envelope.Result, out)
-		}
-		return nil
+		return decodeResponse(method, response, out)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func decodeResponse(method string, response []byte, out any) error {
+	var envelope responseEnvelope
+	if err := json.Unmarshal(response, &envelope); err != nil {
+		return err
+	}
+	if envelope.Error != nil {
+		return fmt.Errorf("cdp %s: %s", method, envelope.Error.Message)
+	}
+	if out != nil {
+		return json.Unmarshal(envelope.Result, out)
+	}
+	return nil
 }
 
 // Close closes the websocket connection.

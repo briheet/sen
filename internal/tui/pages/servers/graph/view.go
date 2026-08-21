@@ -217,11 +217,11 @@ func (m *Model) buildLabelView(selected, hovered, dragging int, focused []bool) 
 		}
 	}
 
-	mutedStyle := lipgloss.NewStyle().Foreground(styles.Zakura.TextMuted)
-	normalStyle := lipgloss.NewStyle().Foreground(styles.Zakura.Text)
-	hotStyle := lipgloss.NewStyle().Foreground(styles.Zakura.NodeHot)
+	mutedStyle := lipgloss.NewStyle().Foreground(m.theme.TextMuted)
+	normalStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+	hotStyle := lipgloss.NewStyle().Foreground(m.theme.NodeHot)
 	if m.obscured {
-		mutedStyle = lipgloss.NewStyle().Foreground(styles.Zakura.Border).Faint(true)
+		mutedStyle = lipgloss.NewStyle().Foreground(m.theme.Border).Faint(true)
 		normalStyle = mutedStyle
 		hotStyle = mutedStyle
 	}

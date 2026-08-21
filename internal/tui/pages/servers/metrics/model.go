@@ -80,19 +80,24 @@ type Style struct {
 
 // New creates a metrics panel backed by the engine's runtime graph.
 func New(source *model.RuntimeGraph, lang config.ServiceLang) Model {
+	return NewWithTheme(source, lang, styles.Zakura)
+}
+
+// NewWithTheme creates a metrics panel using theme.
+func NewWithTheme(source *model.RuntimeGraph, lang config.ServiceLang, theme styles.Theme) Model {
 	result := Model{
 		lang:    lang,
 		history: make([]sample, 0, historyLimit),
 		style: Style{
-			Root:      styles.Panel(styles.Zakura).Padding(0),
-			Section:   lipgloss.NewStyle().Foreground(styles.Zakura.Secondary).Bold(true),
-			Label:     lipgloss.NewStyle().Foreground(styles.Zakura.TextMuted),
-			Value:     lipgloss.NewStyle().Foreground(styles.Zakura.Text),
-			CPU:       lipgloss.NewStyle().Foreground(styles.Zakura.CPU),
-			Memory:    lipgloss.NewStyle().Foreground(styles.Zakura.Memory),
+			Root:      styles.Panel(theme).Padding(0),
+			Section:   lipgloss.NewStyle().Foreground(theme.Secondary).Bold(true),
+			Label:     lipgloss.NewStyle().Foreground(theme.TextMuted),
+			Value:     lipgloss.NewStyle().Foreground(theme.Text),
+			CPU:       lipgloss.NewStyle().Foreground(theme.CPU),
+			Memory:    lipgloss.NewStyle().Foreground(theme.Memory),
 			Column:    lipgloss.NewStyle(),
 			Component: lipgloss.NewStyle().Padding(0, 1),
-			Separator: lipgloss.NewStyle().Foreground(styles.Zakura.TextMuted),
+			Separator: lipgloss.NewStyle().Foreground(theme.TextMuted),
 		},
 	}
 	if source != nil {

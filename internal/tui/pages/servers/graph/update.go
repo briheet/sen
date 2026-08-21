@@ -91,7 +91,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.animating = false
 			m.generation++
 			m.renderSequence++
-			m.renderer.cancel(m.renderSequence)
+			if m.renderer != nil {
+				m.renderer.cancel(m.renderSequence)
+			}
 			m.frontImageID = 0
 			if wasVisible && m.graphics {
 				return m, deleteImagesCommand(m.imageIDs, m.quiet())

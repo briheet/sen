@@ -66,7 +66,8 @@ type Config struct {
 
 // Project contains project-wide configuration.
 type Project struct {
-	Name string `mapstructure:"name" validate:"required"`
+	Name  string `mapstructure:"name" validate:"required"`
+	Theme string `mapstructure:"theme"`
 }
 
 // Service describes one process or external service.

@@ -21,7 +21,11 @@ import (
 // enginesDoneMsg closes the TUI after every configured process exits.
 type enginesDoneMsg struct{}
 
-func initialModel(engines []*engine.Engine, services []config.Service, logPath string, dump io.Writer) model {
+func initialModel(engines []*engine.Engine, services []config.Service, logPath string, dump io.Writer, configuredTheme ...styles.Theme) model {
+	theme := styles.Zakura
+	if len(configuredTheme) > 0 {
+		theme = configuredTheme[0]
+	}
 	pageModels := make([]pages.Page, 0, len(services))
 	targets := make(map[string]*engine.Engine, len(engines))
 	for _, target := range engines {
@@ -37,18 +41,18 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 			if target == nil {
 				continue
 			}
-			page = servers.New(target, dump)
+			page = servers.NewWithTheme(target, dump, theme)
 		case config.ServiceTypeKV:
 			if target == nil {
-				page = kv.FromService(service)
+				page = kv.FromServiceWithTheme(service, theme)
 			} else {
-				page = kv.New(target, dump)
+				page = kv.NewWithTheme(target, dump, theme)
 			}
 		case config.ServiceTypeDB:
 			if target == nil {
-				page = db.FromService(service)
+				page = db.FromServiceWithTheme(service, theme)
 			} else {
-				page = db.New(target, dump)
+				page = db.NewWithTheme(target, dump, theme)
 			}
 		default:
 			continue
@@ -57,7 +61,6 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 	}
 
 	ctx := tuicontext.New(engines, pageModels, logPath)
-	theme := styles.Zakura
 	keyMap := keys.NewModel()
 
 	m := model{

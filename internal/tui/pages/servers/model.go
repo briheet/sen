@@ -32,20 +32,25 @@ type Model struct {
 
 // New creates a server model from a built engine.
 func New(target *engine.Engine, dump io.Writer) Model {
+	return NewWithTheme(target, dump, styles.Zakura)
+}
+
+// NewWithTheme creates a server model using theme.
+func NewWithTheme(target *engine.Engine, dump io.Writer, theme styles.Theme) Model {
 	pager := paginator.New(paginator.WithTotalPages(2))
 	pager.Type = paginator.Dots
-	pager.ActiveDot = lipgloss.NewStyle().Foreground(styles.Zakura.NodeActive).Render(" ● ")
-	pager.InactiveDot = lipgloss.NewStyle().Foreground(styles.Zakura.Border).Render(" ○ ")
+	pager.ActiveDot = lipgloss.NewStyle().Foreground(theme.NodeActive).Render(" ● ")
+	pager.InactiveDot = lipgloss.NewStyle().Foreground(theme.Border).Render(" ○ ")
 	// Page changes are mouse-driven; arrows remain available to workspace tabs.
 	pager.KeyMap.PrevPage.SetEnabled(false)
 	pager.KeyMap.NextPage.SetEnabled(false)
 	return Model{
 		Engine: target,
 		graphs: [2]graph.Model{
-			graph.New(target.Service.Name+":functions", graph.FunctionGraph, target.Graph, dump),
-			graph.New(target.Service.Name+":files", graph.FileGraph, target.Graph, dump),
+			graph.NewWithTheme(target.Service.Name+":functions", graph.FunctionGraph, target.Graph, dump, theme),
+			graph.NewWithTheme(target.Service.Name+":files", graph.FileGraph, target.Graph, dump, theme),
 		},
-		metrics: metrics.New(target.Graph, target.Service.Lang),
+		metrics: metrics.NewWithTheme(target.Graph, target.Service.Lang, theme),
 		pager:   pager,
 		pending: -1,
 	}

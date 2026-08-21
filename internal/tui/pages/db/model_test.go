@@ -75,3 +75,39 @@ func TestActivityAddsOnlySyntheticDatabaseEdge(t *testing.T) {
 	addActivityEdges(static, &snapshot)
 	require.Equal(t, int64(3), snapshot.NodeEdges[model.NodeEdge{From: static.Root, To: statement}])
 }
+
+func TestPageSwitchesViewsFromShiftKeybindings(t *testing.T) {
+	static := analysis.BuildGraph(
+		[]analysis.Statement{{QueryID: 42, Query: "SELECT * FROM users"}},
+		[]analysis.Table{{Name: "users"}},
+	)
+	graph := model.BuildRuntimeGraph(analysis.ModulePath, static)
+	page := New(&engine.Engine{
+		Service: config.Service{Name: "database", Type: config.ServiceTypeDB, Provider: config.ServiceProviderPostgres},
+		Graph:   graph,
+	}, nil)
+
+	updated, _ := page.Update(pages.ViewportMsg{Width: 80, Height: 18, Visible: true})
+	page = updated.(Model)
+
+	updated, command := page.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModShift, Text: "L"})
+	page = updated.(Model)
+	require.Equal(t, 0, page.pager.Page)
+	require.Equal(t, 1, page.pending)
+	require.NotNil(t, command)
+
+	updated, command = page.Update(switchGraphMsg{service: "database", page: 1})
+	page = updated.(Model)
+	require.Equal(t, 1, page.pager.Page)
+	require.NotNil(t, command)
+
+	updated, command = page.Update(tea.KeyPressMsg{Code: 'h', Mod: tea.ModShift, Text: "H"})
+	page = updated.(Model)
+	require.Equal(t, 1, page.pager.Page)
+	require.Equal(t, 0, page.pending)
+	require.NotNil(t, command)
+
+	updated, _ = page.Update(switchGraphMsg{service: "database", page: 0})
+	page = updated.(Model)
+	require.Equal(t, 0, page.pager.Page)
+}

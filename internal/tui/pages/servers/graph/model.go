@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/briheet/sen/internal/model"
+	"github.com/briheet/sen/internal/tui/styles"
 )
 
 const (
@@ -116,10 +117,16 @@ type Model struct {
 	uploadScheduled bool
 	dirty           bool
 	labelScratch    labelScratch
+	theme           styles.Theme
 }
 
 // New builds the selected graph from analyzed project code.
 func New(owner string, kind Kind, source *model.RuntimeGraph, dump io.Writer) Model {
+	return NewWithTheme(owner, kind, source, dump, styles.Zakura)
+}
+
+// NewWithTheme builds the selected graph using theme.
+func NewWithTheme(owner string, kind Kind, source *model.RuntimeGraph, dump io.Writer, theme styles.Theme) Model {
 	nodes, edges, root := build(source, kind)
 	prepareNodes(nodes, edges, kind)
 	simulation := newSimulation(kind, nodes, edges, root)
@@ -135,6 +142,7 @@ func New(owner string, kind Kind, source *model.RuntimeGraph, dump io.Writer) Mo
 		owner:          owner,
 		kind:           kind,
 		dump:           dump,
+		theme:          theme,
 		nodes:          nodes,
 		edges:          edges,
 		root:           root,
@@ -155,7 +163,7 @@ func New(owner string, kind Kind, source *model.RuntimeGraph, dump io.Writer) Mo
 		renderedSelect: -1,
 		renderedHover:  -1,
 	}
-	m.renderer = newRenderer(owner, dump)
+	m.renderer = newRendererWithTheme(owner, dump, theme)
 	m.trace("initialized graphics=%t nodes=%d edges=%d term=%q term_program=%q kitty_window=%t",
 		m.graphics, len(nodes), len(edges), os.Getenv("TERM"), os.Getenv("TERM_PROGRAM"), os.Getenv("KITTY_WINDOW_ID") != "")
 	return m

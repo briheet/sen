@@ -35,31 +35,46 @@ type Model struct {
 
 // New creates a database page from a built engine.
 func New(target *engine.Engine, dump io.Writer) Model {
+	return NewWithTheme(target, dump, styles.Zakura)
+}
+
+// NewWithTheme creates a database page using theme.
+func NewWithTheme(target *engine.Engine, dump io.Writer, theme styles.Theme) Model {
 	statements, tables := databaseViews(target.Graph)
 	return Model{
 		Service: target.Service,
 		Engine:  target,
 		dump:    dump,
 		graphs: [2]graph.Model{
-			graph.New(target.Service.Name+":statements", graph.FunctionGraph, statements, dump),
-			graph.New(target.Service.Name+":tables", graph.FunctionGraph, tables, dump),
+			graph.NewWithTheme(target.Service.Name+":statements", graph.FunctionGraph, statements, dump, theme),
+			graph.NewWithTheme(target.Service.Name+":tables", graph.FunctionGraph, tables, dump, theme),
 		},
-		metrics: metrics.New(target.Service.Provider, target.Graph),
-		pager:   databasePager(),
+		metrics: metrics.NewWithTheme(target.Service.Provider, target.Graph, theme),
+		pager:   databasePager(theme),
 		pending: -1,
 	}
 }
 
 // FromService creates a placeholder for a database without a live engine.
 func FromService(service config.Service) Model {
-	return Model{Service: service, pager: databasePager(), pending: -1}
+	return FromServiceWithTheme(service, styles.Zakura)
 }
 
-func databasePager() paginator.Model {
+// FromServiceWithTheme creates a themed placeholder without a live engine.
+func FromServiceWithTheme(service config.Service, theme styles.Theme) Model {
+	return Model{
+		Service: service,
+		metrics: metrics.NewWithTheme(service.Provider, nil, theme),
+		pager:   databasePager(theme),
+		pending: -1,
+	}
+}
+
+func databasePager(theme styles.Theme) paginator.Model {
 	pager := paginator.New(paginator.WithTotalPages(2))
 	pager.Type = paginator.Dots
-	pager.ActiveDot = lipgloss.NewStyle().Foreground(styles.Zakura.NodeActive).Render(" ● ")
-	pager.InactiveDot = lipgloss.NewStyle().Foreground(styles.Zakura.Border).Render(" ○ ")
+	pager.ActiveDot = lipgloss.NewStyle().Foreground(theme.NodeActive).Render(" ● ")
+	pager.InactiveDot = lipgloss.NewStyle().Foreground(theme.Border).Render(" ○ ")
 	// Page changes are mouse-driven; arrows remain available to workspace tabs.
 	pager.KeyMap.PrevPage.SetEnabled(false)
 	pager.KeyMap.NextPage.SetEnabled(false)

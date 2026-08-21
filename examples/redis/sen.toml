@@ -1,8 +1,9 @@
 [project]
 name = "redis-example"
+theme = "catppuccin-mocha"
 
 [[services]]
 name = "cache"
 type = "kv"
 provider = "redis"
-address = "127.0.0.1:6379"
+address = "127.0.0.1:6380"

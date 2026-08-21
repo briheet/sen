@@ -1,0 +1,25 @@
+[project]
+name = "go-postgres-redis-example"
+
+[[services]]
+name = "api"
+type = "server"
+lang = "go"
+path = "."
+run_args = [
+  "--address", ":8080",
+  "--postgres-url", "postgres://sen:sen@127.0.0.1:5432/sen?sslmode=disable",
+  "--redis-address", "127.0.0.1:6379",
+]
+
+[[services]]
+name = "database"
+type = "db"
+provider = "postgres"
+address = "postgres://sen:sen@127.0.0.1:5432/sen?sslmode=disable"
+
+[[services]]
+name = "cache"
+type = "kv"
+provider = "redis"
+address = "127.0.0.1:6379"

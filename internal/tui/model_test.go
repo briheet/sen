@@ -62,6 +62,12 @@ func TestModelContainsBuiltEngines(t *testing.T) {
 	require.NotContains(t, view.Content, "╭")
 }
 
+func TestModelUsesConfiguredTheme(t *testing.T) {
+	m := initialModel(nil, nil, "", nil, styles.CatppuccinMocha)
+
+	require.Equal(t, styles.CatppuccinMocha, m.activeTheme)
+}
+
 func TestGraphRendersAboveStatusBar(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	static := &runtimeModel.StaticGraph{

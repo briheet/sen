@@ -1,7 +1,9 @@
 package styles
 
 import (
+	"fmt"
 	"image/color"
+	"strings"
 
 	"charm.land/fang/v2"
 	"charm.land/lipgloss/v2"
@@ -51,6 +53,21 @@ var Zakura = Theme{
 	Success: lipgloss.Color("#9EB59F"),
 	Warning: lipgloss.Color("#D0A765"),
 	Error:   lipgloss.Color("#D86B82"),
+}
+
+// ResolveTheme returns a configured theme, defaulting to Zakura when unset.
+func ResolveTheme(name string) (Theme, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || name == "zakura" {
+		return Zakura, nil
+	}
+	if theme, ok := Themes[name]; ok {
+		return theme, nil
+	}
+	if theme, ok := PixelArtThemes[name]; ok {
+		return theme, nil
+	}
+	return Theme{}, fmt.Errorf("unknown theme %q", name)
 }
 
 // Cli ColorScheme function

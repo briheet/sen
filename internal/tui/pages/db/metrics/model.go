@@ -8,6 +8,7 @@ import (
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/model"
 	postgresmetrics "github.com/briheet/sen/internal/tui/pages/db/metrics/postgres"
+	"github.com/briheet/sen/internal/tui/styles"
 )
 
 const (
@@ -24,9 +25,14 @@ type Model struct {
 
 // New selects the dashboard for provider.
 func New(provider config.ServiceProvider, source *model.RuntimeGraph) Model {
+	return NewWithTheme(provider, source, styles.Zakura)
+}
+
+// NewWithTheme selects the dashboard for provider using theme.
+func NewWithTheme(provider config.ServiceProvider, source *model.RuntimeGraph, theme styles.Theme) Model {
 	result := Model{provider: provider}
 	if provider == config.ServiceProviderPostgres {
-		result.postgres = postgresmetrics.New(source)
+		result.postgres = postgresmetrics.NewWithTheme(source, theme)
 	}
 	return result
 }

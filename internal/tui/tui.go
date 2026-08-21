@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/briheet/sen/internal/build"
 	"github.com/briheet/sen/internal/config"
+	"github.com/briheet/sen/internal/tui/styles"
 )
 
 // Tui owns the terminal model and engines for one run.
@@ -20,12 +21,16 @@ type Tui struct {
 
 // NewTui builds configured engines and initializes the terminal model.
 func NewTui(ctx context.Context, configuration *config.Config) (*Tui, error) {
+	theme, err := styles.ResolveTheme(configuration.Project.Theme)
+	if err != nil {
+		return nil, err
+	}
 	group, err := build.New(ctx, configuration)
 	if err != nil {
 		return nil, err
 	}
 	return &Tui{
-		model: initialModel(group.Engines, configuration.Services, group.LogPath(), group.DebugWriter()),
+		model: initialModel(group.Engines, configuration.Services, group.LogPath(), group.DebugWriter(), theme),
 		group: group,
 	}, nil
 }

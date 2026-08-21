@@ -21,11 +21,11 @@ type Model struct {
 func NewModel() *Model {
 	return &Model{
 		Previous: key.NewBinding(
-			key.WithKeys("left", "shift+h"),
+			key.WithKeys("left", "h"),
 			key.WithHelp("←/h", "previous"),
 		),
 		Next: key.NewBinding(
-			key.WithKeys("right", "shift+l"),
+			key.WithKeys("right", "l"),
 			key.WithHelp("→/l", "next"),
 		),
 		Metrics: key.NewBinding(

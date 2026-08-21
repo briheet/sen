@@ -260,6 +260,16 @@ func TestHiddenGraphCancelsFramesAndDeletesImages(t *testing.T) {
 	require.Nil(t, graph.upload())
 }
 
+func TestZeroValueGraphIgnoresHiddenViewport(t *testing.T) {
+	var graph Model
+
+	graph, command := graph.Update(pages.ViewportMsg{Width: 40, Height: 10, Visible: false})
+
+	require.Nil(t, command)
+	require.False(t, graph.visible)
+	require.Zero(t, graph.frontImageID)
+}
+
 func TestLabelRevisionChangesOnlyAfterCrossingCell(t *testing.T) {
 	t.Setenv("TERM", "xterm-ghostty")
 	graph, _ := New("api", FunctionGraph, testRuntimeGraph(), nil).Update(visibleViewport(80, 16))

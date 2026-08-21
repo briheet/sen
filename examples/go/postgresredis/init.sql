@@ -1,0 +1,8 @@
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+CREATE TABLE IF NOT EXISTS visits (
+  id BIGSERIAL PRIMARY KEY,
+  user_name TEXT NOT NULL,
+  cache_count BIGINT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -98,6 +98,46 @@ func TestServerSwitchesViewsFromPager(t *testing.T) {
 	require.NotNil(t, command)
 }
 
+func TestServerSwitchesViewsFromShiftKeybindings(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	static := &model.StaticGraph{
+		Root: 1,
+		Nodes: map[model.NodeID]*model.StaticNode{
+			1: {ID: 1, Name: "main", Syntax: model.Syntax{File: 1}},
+		},
+		Files: map[model.FileID]*model.StaticFile{
+			1: {ID: 1, Path: "/project/main.go", Functions: []model.NodeID{1}},
+		},
+	}
+	server := New(&engine.Engine{
+		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
+		Graph: &model.RuntimeGraph{
+			Static: static,
+			Nodes:  map[model.NodeID]*model.Node{1: {Static: static.Nodes[1]}},
+			Files:  map[model.FileID]*model.File{1: {Static: static.Files[1]}},
+		},
+	}, nil)
+	page, _ := server.Update(pages.ViewportMsg{Width: 21, Height: 8, Visible: true})
+
+	page, command := page.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModShift, Text: "L"})
+	require.Equal(t, 0, page.(Model).pager.Page)
+	require.Equal(t, 1, page.(Model).pending)
+	require.NotNil(t, command)
+
+	page, command = page.Update(switchGraphMsg{service: "api", page: 1})
+	require.Equal(t, 1, page.(Model).pager.Page)
+	require.Contains(t, page.(Model).View().Content, "main.go")
+	require.NotNil(t, command)
+
+	page, command = page.Update(tea.KeyPressMsg{Code: 'h', Mod: tea.ModShift, Text: "H"})
+	require.Equal(t, 1, page.(Model).pager.Page)
+	require.Equal(t, 0, page.(Model).pending)
+	require.NotNil(t, command)
+
+	page, _ = page.Update(switchGraphMsg{service: "api", page: 0})
+	require.Equal(t, 0, page.(Model).pager.Page)
+}
+
 func TestServerTogglesMetricsOverlay(t *testing.T) {
 	t.Setenv("TERM", "dumb")
 	static := &model.StaticGraph{

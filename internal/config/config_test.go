@@ -15,6 +15,7 @@ func TestLoad(t *testing.T) {
 	path := filepath.Join(dir, "sen.toml")
 	data := []byte(`[project]
 name = "my-backend"
+theme = "catppuccin-mocha"
 
 [[services]]
 name = "api"
@@ -48,6 +49,7 @@ address = " postgres://sen:sen@localhost:5432/sen "
 	result, err := Load(path)
 	require.NoError(t, err)
 	require.Equal(t, "my-backend", result.Project.Name)
+	require.Equal(t, "catppuccin-mocha", result.Project.Theme)
 	require.Equal(t, []Service{
 		{
 			Name:      "api",

@@ -11,6 +11,8 @@ import (
 )
 
 var toggleMetrics = key.NewBinding(key.WithKeys("M", "shift+m"))
+var previousGraph = key.NewBinding(key.WithKeys("H", "shift+h"))
+var nextGraph = key.NewBinding(key.WithKeys("L", "shift+l"))
 
 // switchGraphMsg selects a graph after the previous Kitty image is removed.
 type switchGraphMsg struct {
@@ -113,6 +115,18 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 		m.graphs[change.page], command = m.graphs[change.page].Update(viewport)
 		return m, command
 	}
+	if press, ok := msg.(tea.KeyPressMsg); ok && m.pending < 0 {
+		switch {
+		case key.Matches(press, previousGraph):
+			if page, command, changed := m.switchPage(m.pager.Page - 1); changed {
+				return page, command
+			}
+		case key.Matches(press, nextGraph):
+			if page, command, changed := m.switchPage(m.pager.Page + 1); changed {
+				return page, command
+			}
+		}
+	}
 
 	if viewport, ok := msg.(pages.ViewportMsg); ok {
 		m.viewport = viewport
@@ -180,4 +194,25 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 		}
 	}
 	return m, tea.Batch(commands...)
+}
+
+func (m Model) switchPage(page int) (pages.Page, tea.Cmd, bool) {
+	if page < 0 || page >= m.pager.TotalPages || page == m.pager.Page || m.pending >= 0 {
+		return m, nil, false
+	}
+	previous := m.pager.Page
+	m.pending = page
+	viewport := m.viewport
+	viewport.Width = m.width
+	viewport.Height = max(0, m.height-1)
+
+	hidden := viewport
+	hidden.Visible = false
+	var hideCommand tea.Cmd
+	m.graphs[previous], hideCommand = m.graphs[previous].Update(hidden)
+
+	showCommand := func() tea.Msg {
+		return switchGraphMsg{service: m.Name(), page: page}
+	}
+	return m, tea.Sequence(hideCommand, showCommand), true
 }

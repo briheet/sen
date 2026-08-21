@@ -44,14 +44,18 @@ func TestProgramNavigatesPages(t *testing.T) {
 			bytes.Contains(output, []byte("move graph"))
 	})
 	tm.Type("?")
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyRight})
+	tm.Type("l")
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
 		return bytes.Contains(output, []byte("cache (redis)"))
+	})
+	tm.Type("h")
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		return bytes.Contains(output, []byte("api"))
 	})
 	tm.Type("q")
 
 	final := tm.FinalModel(t, teatest.WithFinalTimeout(time.Second)).(model)
-	require.Equal(t, "cache", final.ctx.ActivePage())
+	require.Equal(t, "api", final.ctx.ActivePage())
 	require.Equal(t, 80, final.width)
 	require.Equal(t, 24, final.height)
 }
