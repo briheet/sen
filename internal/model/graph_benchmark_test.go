@@ -51,3 +51,78 @@ func BenchmarkRuntimeGraphUpdates(b *testing.B) {
 		result.ApplyUpdate(result.BuildUpdate(metrics, profiles, trace))
 	}
 }
+
+func BenchmarkRuntimeGraphRepeatedTraceStack(b *testing.B) {
+	const sourcePath = "/src/example/main.go"
+	static := &StaticGraph{
+		Nodes: map[NodeID]*StaticNode{
+			1: {ID: 1, Syntax: Syntax{File: 1, Start: Position{Line: 1}, End: Position{Line: 20}}},
+		},
+		Files: map[FileID]*StaticFile{
+			1: {ID: 1, Path: sourcePath, Package: 1, Functions: []NodeID{1}},
+		},
+		Packages: map[PackageID]*Package{
+			1: {Path: "example.com/app", Name: "main"},
+		},
+	}
+	events := make([]Event, 1024)
+	for index := range events {
+		events[index] = Event{
+			At:        time.Duration(index),
+			Kind:      EventStackSample,
+			Goroutine: 1,
+			Processor: 0,
+			Thread:    1,
+			Stack:     1,
+		}
+	}
+	trace := &Trace{
+		Duration: time.Second,
+		Stacks: map[StackID]TraceStack{
+			1: {Frames: []TraceFrame{{File: sourcePath, Line: 10}}},
+		},
+		Events: events,
+	}
+	graph := BuildRuntimeGraph("example.com/app", static)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		graph.ApplyUpdate(graph.BuildUpdate(&RuntimeMetrics{}, nil, trace))
+	}
+}
+
+func BenchmarkRuntimeGraphAggregatedTraceStack(b *testing.B) {
+	const sourcePath = "/src/example/main.go"
+	static := &StaticGraph{
+		Nodes: map[NodeID]*StaticNode{
+			1: {ID: 1, Syntax: Syntax{File: 1, Start: Position{Line: 1}, End: Position{Line: 20}}},
+		},
+		Files: map[FileID]*StaticFile{
+			1: {ID: 1, Path: sourcePath, Package: 1, Functions: []NodeID{1}},
+		},
+		Packages: map[PackageID]*Package{
+			1: {Path: "example.com/app", Name: "main"},
+		},
+	}
+	summary := newTraceSummary()
+	summary.Duration = time.Second
+	summary.StackSamples = 1024
+	trace := &Trace{
+		Duration: time.Second,
+		Stacks: map[StackID]TraceStack{
+			1: {Frames: []TraceFrame{{File: sourcePath, Line: 10}}},
+		},
+		Aggregate: &TraceAggregate{
+			Summary: summary,
+			Stacks: map[StackID]TraceStackAggregate{
+				1: {Samples: 1024},
+			},
+		},
+	}
+	graph := BuildRuntimeGraph("example.com/app", static)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		graph.ApplyUpdate(graph.BuildUpdate(&RuntimeMetrics{}, nil, trace))
+	}
+}

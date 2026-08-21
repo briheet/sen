@@ -22,8 +22,10 @@ type Engine struct {
 	Runtime adapters.Runtime
 	Graph   *model.RuntimeGraph
 
-	mu       sync.RWMutex
-	revision atomic.Uint64
+	mu         sync.RWMutex
+	revision   atomic.Uint64
+	updates    chan struct{}
+	updateOnce sync.Once
 }
 
 // NewEngine resolves, analyzes, and opens a configured service.
@@ -69,11 +71,29 @@ func (e *Engine) Refresh(ctx context.Context) error {
 	e.Graph.ApplyUpdate(update)
 	e.mu.Unlock()
 	e.revision.Add(1)
+	e.notifyUpdate()
 	return nil
 }
 
 // Revision changes after each complete metrics, profile, and trace window.
 func (e *Engine) Revision() uint64 { return e.revision.Load() }
+
+// Updates reports completed snapshots. Slow consumers observe the latest snapshot.
+func (e *Engine) Updates() <-chan struct{} {
+	return e.updatesChannel()
+}
+
+func (e *Engine) updatesChannel() chan struct{} {
+	e.updateOnce.Do(func() { e.updates = make(chan struct{}, 1) })
+	return e.updates
+}
+
+func (e *Engine) notifyUpdate() {
+	select {
+	case e.updatesChannel() <- struct{}{}:
+	default:
+	}
+}
 
 // Snapshot returns the latest completed runtime window.
 func (e *Engine) Snapshot() model.RuntimeSnapshot {

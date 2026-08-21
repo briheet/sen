@@ -128,6 +128,44 @@ func TestBuildRuntimeGraph(t *testing.T) {
 	require.Equal(t, 5*time.Nanosecond, summary.Ranges["GC"])
 	require.Equal(t, uint64(42), summary.Metrics["/gc/heap/goal:bytes"])
 
+	aggregateSummary := newTraceSummary()
+	aggregateSummary.Duration = 40 * time.Nanosecond
+	aggregateSummary.Goroutines = 1
+	aggregateSummary.PeakGoroutines = 1
+	aggregateSummary.Processors = 1
+	aggregateSummary.Threads = 1
+	aggregateSummary.StackSamples = 2
+	aggregateSummary.GoroutineStates[StateRunnable] = 10 * time.Nanosecond
+	aggregateSummary.GoroutineStates[StateRunning] = 5 * time.Nanosecond
+	aggregateSummary.GoroutineStates[StateWaiting] = 20 * time.Nanosecond
+	aggregateSummary.ProcessorStates[StateRunning] = 20 * time.Nanosecond
+	aggregateSummary.ProcessorStates[StateIdle] = 20 * time.Nanosecond
+	aggregateSummary.Ranges["GC"] = 5 * time.Nanosecond
+	aggregateSummary.Metrics["/gc/heap/goal:bytes"] = 42
+	aggregatedTrace := &Trace{
+		Duration: 40 * time.Nanosecond,
+		Stacks:   observedTrace.Stacks,
+		Aggregate: &TraceAggregate{
+			Summary: aggregateSummary,
+			Stacks: map[StackID]TraceStackAggregate{
+				1: {
+					Samples:  1,
+					Runnable: TraceStackCost{Duration: 10 * time.Nanosecond, Occurrences: 2},
+					Waiting:  TraceStackCost{Duration: 20 * time.Nanosecond, Occurrences: 1},
+				},
+				2: {Samples: 1},
+			},
+		},
+	}
+	aggregatedResult := BuildRuntimeGraph("example.com/app", static)
+	aggregatedResult.ApplyUpdate(aggregatedResult.BuildUpdate(metrics, profiles, aggregatedTrace))
+	require.Equal(t, result.Global, aggregatedResult.Global)
+	require.Equal(t, result.Nodes, aggregatedResult.Nodes)
+	require.Equal(t, result.Files, aggregatedResult.Files)
+	require.Equal(t, result.Unmapped, aggregatedResult.Unmapped)
+	require.Equal(t, result.NodeEdges, aggregatedResult.NodeEdges)
+	require.Equal(t, result.FileEdges, aggregatedResult.FileEdges)
+
 	node := result.Nodes[2]
 	result.ApplyUpdate(result.BuildUpdate(&RuntimeMetrics{Go: GoMetrics{UserCPU: 2.5}}, nil, nil))
 	require.Same(t, node, result.Nodes[2])
@@ -149,6 +187,43 @@ func TestTraceEdgesFollowCallerToCalleeOrder(t *testing.T) {
 		{From: 2, To: 3}: 1,
 	}, nodes)
 	require.Equal(t, map[FileEdge]int64{{From: 1, To: 2}: 1}, files)
+}
+
+func TestTraceTargetsCacheStackAndFileResolution(t *testing.T) {
+	const sourcePath = "/src/example/main.go"
+	graph := BuildRuntimeGraph("example.com/app", &StaticGraph{
+		Nodes: map[NodeID]*StaticNode{
+			1: {ID: 1, Syntax: Syntax{File: 1, Start: Position{Line: 1}, End: Position{Line: 20}}},
+		},
+		Files: map[FileID]*StaticFile{
+			1: {ID: 1, Path: sourcePath, Package: 1, Functions: []NodeID{1}},
+		},
+		Packages: map[PackageID]*Package{
+			1: {Path: "example.com/app", Name: "main"},
+		},
+	})
+	trace := &Trace{Stacks: map[StackID]TraceStack{
+		1: {Frames: []TraceFrame{{File: "example.com/app/main.go", Line: 10}}},
+	}}
+	workspace := acquireTraceWorkspace()
+	targets := acquireTargetWorkspace()
+	t.Cleanup(func() {
+		releaseTraceWorkspace(workspace)
+		releaseTargetWorkspace(targets)
+	})
+
+	nodes, files := graph.traceTargets(trace, 1, workspace, targets)
+	cachedNodes, cachedFiles := graph.traceTargets(trace, 1, workspace, targets)
+	require.Equal(t, []NodeID{1}, nodes)
+	require.Equal(t, []FileID{1}, files)
+	require.Same(t, &nodes[0], &cachedNodes[0])
+	require.Same(t, &files[0], &cachedFiles[0])
+	require.Len(t, workspace.targets, 1)
+	require.Equal(t, FileID(1), graph.mapper.resolved["example.com/app/main.go"])
+
+	_, ok := graph.mapper.file("example.com/other/missing.go")
+	require.False(t, ok)
+	require.Contains(t, graph.mapper.resolved, "example.com/other/missing.go")
 }
 
 func TestSnapshotIncludesProfileActivity(t *testing.T) {

@@ -35,6 +35,7 @@ type frameMapper struct {
 	static   *StaticGraph
 	paths    map[string]FileID
 	relative map[FileID]string
+	resolved map[string]FileID
 }
 
 func newMapper(modulePath string, static *StaticGraph, result *RuntimeGraph) *frameMapper {
@@ -42,6 +43,7 @@ func newMapper(modulePath string, static *StaticGraph, result *RuntimeGraph) *fr
 		static:   static,
 		paths:    make(map[string]FileID),
 		relative: make(map[FileID]string),
+		resolved: make(map[string]FileID),
 	}
 	for id, file := range static.Files {
 		pkg := static.Packages[file.Package]
@@ -150,12 +152,16 @@ func (m *frameMapper) file(path string) (FileID, bool) {
 	if path == "" {
 		return 0, false
 	}
+	if id, ok := m.resolved[path]; ok {
+		return id, id != 0
+	}
 	clean := filepath.Clean(path)
 	if id, ok := m.paths[clean]; ok {
+		m.resolved[strings.Clone(path)] = id
 		return id, true
 	}
 
-	candidate := filepath.ToSlash(filepath.Clean(path))
+	candidate := filepath.ToSlash(clean)
 	var match FileID
 	longest := 0
 	for id, relative := range m.relative {
@@ -166,6 +172,7 @@ func (m *frameMapper) file(path string) (FileID, bool) {
 			}
 		}
 	}
+	m.resolved[strings.Clone(path)] = match
 	return match, match != 0
 }
 

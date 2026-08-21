@@ -61,6 +61,9 @@ func TestCollectRuntimeData(t *testing.T) {
 	if observed.Profiles["cpu"] == nil || observed.Trace == nil {
 		t.Fatal("collector returned incomplete runtime data")
 	}
+	if observed.Trace.Aggregate == nil || len(observed.Trace.Events) != 0 {
+		t.Fatal("Go trace was not decoded as a streamed aggregate")
+	}
 	observed.Metrics.Process = observed.sampler.Collect(ctx)
 	if !observed.Metrics.Process.Has(model.ProcessMemory) {
 		t.Fatal("collector returned incomplete process metrics")

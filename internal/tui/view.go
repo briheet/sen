@@ -5,31 +5,36 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/briheet/sen/internal/tui/pages"
 )
 
-func (m model) View() tea.View {
+func (m *model) View() tea.View {
 	return m.view
 }
 
 // refreshView rebuilds terminal text when visible component state changes.
 func (m *model) refreshView() {
-	var view tea.View
-	if page, ok := m.ctx.Page(m.ctx.ActivePage()); ok {
-		view = page.View()
-	}
-
 	width := max(0, m.width)
 	bodyHeight := max(0, m.height-1)
-	body := fitBody(view.Content, width, bodyHeight)
+	pageName := m.ctx.ActivePage()
+	if page, ok := m.ctx.Page(pageName); ok {
+		revision := page.Revision()
+		if m.bodyPage != pageName || m.bodyRevision != revision || m.bodyWidth != width ||
+			m.bodyHeight != bodyHeight || m.bodyEpoch != m.renderEpoch {
+			m.body = page.View()
+			m.body.Content = fitBody(m.body.Content, width, bodyHeight)
+			m.bodyPage = pageName
+			m.bodyRevision = revision
+			m.bodyWidth = width
+			m.bodyHeight = bodyHeight
+			m.bodyEpoch = m.renderEpoch
+		}
+	} else {
+		m.body = tea.View{}
+	}
+	body := m.body.Content
 	if panel := m.statusbar.HelpView(); panel != "" {
-		canvas := lipgloss.NewCanvas(width, bodyHeight)
-		canvas.Compose(lipgloss.NewCompositor(
-			lipgloss.NewLayer(body),
-			lipgloss.NewLayer(panel).
-				X(max(0, (width-lipgloss.Width(panel))/2)).
-				Y(max(0, (bodyHeight-lipgloss.Height(panel))/2)),
-		))
-		body = canvas.Render()
+		body = pages.Overlay(&m.canvas, width, bodyHeight, body, panel)
 	}
 	bar := m.statusbar.View()
 
@@ -43,6 +48,7 @@ func (m *model) refreshView() {
 	if m.height > 0 {
 		content.WriteString(bar)
 	}
+	view := m.body
 	view.Content = content.String()
 	view.AltScreen = true
 	view.WindowTitle = "sen"

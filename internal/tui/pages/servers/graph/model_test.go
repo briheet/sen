@@ -76,6 +76,7 @@ func TestFunctionGraphScalesConnectedFunctions(t *testing.T) {
 func TestTelemetryHighlightsObservedTracePath(t *testing.T) {
 	graph := New("api", FunctionGraph, testRuntimeGraph(), nil)
 	graph.graphics = false
+	revision := graph.Revision()
 	graph, command := graph.Update(TelemetryMsg{
 		Nodes:     map[model.NodeID]int64{1: 4, 2: 2},
 		NodeEdges: map[model.NodeEdge]int64{{From: 1, To: 2}: 2},
@@ -85,6 +86,7 @@ func TestTelemetryHighlightsObservedTracePath(t *testing.T) {
 	require.True(t, graph.nodes[0].active)
 	require.True(t, graph.nodes[1].active)
 	require.False(t, graph.nodes[2].active)
+	require.Equal(t, revision, graph.Revision())
 	request := graphRenderRequest(graph)
 	require.Equal(t, 2, edgeClass(&request, graph.edges[0]))
 	require.Equal(t, 1, edgeClass(&request, graph.edges[1]))

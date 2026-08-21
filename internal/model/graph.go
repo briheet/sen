@@ -299,7 +299,10 @@ func (g *RuntimeGraph) applyCode(update CodeUpdate, transfer bool) {
 }
 
 func (g *RuntimeGraph) copyTrace(source TraceSummary) {
-	target := &g.Global.Trace
+	assignTraceSummary(&g.Global.Trace, source)
+}
+
+func assignTraceSummary(target *TraceSummary, source TraceSummary) {
 	target.Duration = source.Duration
 	target.Goroutines = source.Goroutines
 	target.LiveGoroutines = source.LiveGoroutines

@@ -51,12 +51,12 @@ func TestPageRendersDatabaseGraphAndMetrics(t *testing.T) {
 	}, nil)
 
 	updated, _ := page.Update(pages.ViewportMsg{Width: 80, Height: 18, Visible: true})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.Equal(t, 80, lipgloss.Width(page.View().Content))
 	require.Contains(t, page.View().Content, "Pixel graph requires")
 
 	updated, _ = page.Update(tea.KeyPressMsg{Code: 'm', Mod: tea.ModShift, Text: "M"})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.Contains(t, page.View().Content, "DATABASE")
 	require.Contains(t, page.View().Content, "2.0 MiB")
 }
@@ -88,26 +88,46 @@ func TestPageSwitchesViewsFromShiftKeybindings(t *testing.T) {
 	}, nil)
 
 	updated, _ := page.Update(pages.ViewportMsg{Width: 80, Height: 18, Visible: true})
-	page = updated.(Model)
+	page = updated.(*Model)
 
 	updated, command := page.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModShift, Text: "L"})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.Equal(t, 0, page.pager.Page)
 	require.Equal(t, 1, page.pending)
 	require.NotNil(t, command)
 
 	updated, command = page.Update(switchGraphMsg{service: "database", page: 1})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.Equal(t, 1, page.pager.Page)
 	require.NotNil(t, command)
 
 	updated, command = page.Update(tea.KeyPressMsg{Code: 'h', Mod: tea.ModShift, Text: "H"})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.Equal(t, 1, page.pager.Page)
 	require.Equal(t, 0, page.pending)
 	require.NotNil(t, command)
 
 	updated, _ = page.Update(switchGraphMsg{service: "database", page: 0})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.Equal(t, 0, page.pager.Page)
+}
+
+func TestTelemetryInvalidatesOnlyVisibleMetrics(t *testing.T) {
+	target := &engine.Engine{
+		Service: config.Service{Name: "database", Type: config.ServiceTypeDB, Provider: config.ServiceProviderPostgres},
+		Graph:   model.BuildRuntimeGraph(analysis.ModulePath, analysis.BuildGraph(nil, nil)),
+	}
+	page := New(target, nil)
+	page.telemetry = 1
+	revision := page.Revision()
+
+	updated, _ := page.Update(pages.TelemetryTickMsg{})
+	page = updated.(*Model)
+	require.Equal(t, revision, page.Revision())
+
+	page.showMetrics = true
+	page.telemetry = 1
+	revision = page.Revision()
+	updated, _ = page.Update(pages.TelemetryTickMsg{})
+	require.Greater(t, updated.Revision(), revision)
 }

@@ -65,6 +65,32 @@ func TestRunCollectsUntilProcessExit(t *testing.T) {
 	require.GreaterOrEqual(t, target.Revision(), uint64(3))
 }
 
+func TestRefreshCoalescesUpdateNotifications(t *testing.T) {
+	runtime := &continuousRuntime{exit: make(chan error, 1)}
+	graph := model.BuildRuntimeGraph("", &model.StaticGraph{
+		Nodes: make(map[model.NodeID]*model.StaticNode), Files: make(map[model.FileID]*model.StaticFile),
+		Packages: make(map[model.PackageID]*model.Package),
+	})
+	target := &Engine{Runtime: runtime, Graph: graph}
+	updates := target.Updates()
+
+	require.NoError(t, target.Refresh(context.Background()))
+	select {
+	case <-updates:
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not publish an update")
+	}
+
+	require.NoError(t, target.Refresh(context.Background()))
+	require.NoError(t, target.Refresh(context.Background()))
+	<-updates
+	select {
+	case <-updates:
+		t.Fatal("slow consumer received duplicate stale updates")
+	default:
+	}
+}
+
 type continuousRuntime struct {
 	exit        chan error
 	collections atomic.Int64

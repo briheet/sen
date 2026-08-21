@@ -13,22 +13,25 @@ type ProgramContext struct {
 	// log in a single file, please change this behaviour.
 	logPath string // engine logging path for UI logs
 
-	pages      map[string]pages.Page // service pages by name
-	pageOrder  []string              // service names in configuration order
-	activePage string                // current active page
+	pages       map[string]pages.Page // service pages by name
+	pageOrder   []pages.Page          // service pages in configuration order
+	pageIndexes map[string]int
+	activePage  string // current active page
 }
 
 // New creates the shared state used by the workspace and its components.
 func New(engines []*engine.Engine, pageModels []pages.Page, logPath string) *ProgramContext {
 	c := &ProgramContext{
-		engines:   engines,
-		logPath:   logPath,
-		pages:     make(map[string]pages.Page, len(pageModels)),
-		pageOrder: make([]string, 0, len(pageModels)),
+		engines:     engines,
+		logPath:     logPath,
+		pages:       make(map[string]pages.Page, len(pageModels)),
+		pageOrder:   make([]pages.Page, 0, len(pageModels)),
+		pageIndexes: make(map[string]int, len(pageModels)),
 	}
 	for _, page := range pageModels {
 		c.pages[page.Name()] = page
-		c.pageOrder = append(c.pageOrder, page.Name())
+		c.pageIndexes[page.Name()] = len(c.pageOrder)
+		c.pageOrder = append(c.pageOrder, page)
 		if c.activePage == "" {
 			c.activePage = page.Name()
 		}
@@ -38,11 +41,7 @@ func New(engines []*engine.Engine, pageModels []pages.Page, logPath string) *Pro
 
 // Pages returns service pages in configuration order.
 func (c *ProgramContext) Pages() []pages.Page {
-	result := make([]pages.Page, 0, len(c.pageOrder))
-	for _, name := range c.pageOrder {
-		result = append(result, c.pages[name])
-	}
-	return result
+	return c.pageOrder
 }
 
 // Page returns a service page by name.
@@ -54,6 +53,9 @@ func (c *ProgramContext) Page(name string) (pages.Page, bool) {
 // SetPage stores state returned by a page update.
 func (c *ProgramContext) SetPage(page pages.Page) {
 	c.pages[page.Name()] = page
+	if index, ok := c.pageIndexes[page.Name()]; ok {
+		c.pageOrder[index] = page
+	}
 }
 
 // ActivePage returns the selected service name.

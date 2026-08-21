@@ -207,9 +207,30 @@ type StackID uint64
 
 // Trace contains decoded events and their shared stacks.
 type Trace struct {
-	Duration time.Duration
-	Events   []Event
-	Stacks   map[StackID]TraceStack
+	Duration  time.Duration
+	Events    []Event
+	Stacks    map[StackID]TraceStack
+	Aggregate *TraceAggregate
+}
+
+// TraceAggregate contains streamed trace costs grouped by stack.
+type TraceAggregate struct {
+	Summary TraceSummary
+	Stacks  map[StackID]TraceStackAggregate
+}
+
+// TraceStackAggregate contains source-attributed costs for one stack.
+type TraceStackAggregate struct {
+	Samples  int64
+	Runnable TraceStackCost
+	Waiting  TraceStackCost
+	Syscall  TraceStackCost
+}
+
+// TraceStackCost combines a state's duration with the number of intervals.
+type TraceStackCost struct {
+	Duration    time.Duration
+	Occurrences int64
 }
 
 // Event contains common and event-specific runtime data.

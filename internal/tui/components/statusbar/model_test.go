@@ -29,6 +29,7 @@ func TestStatusBarNavigatesServicesAndOpensHelp(t *testing.T) {
 
 	require.Equal(t, 60, lipgloss.Width(model.View()))
 	require.Contains(t, model.View(), "? help")
+	require.Zero(t, testing.AllocsPerRun(100, func() { _ = model.View() }))
 
 	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	require.Equal(t, "cache", ctx.ActivePage())

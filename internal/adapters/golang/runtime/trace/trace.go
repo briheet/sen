@@ -9,6 +9,10 @@ type (
 	ResourceKind = model.ResourceKind
 	StackID      = model.StackID
 	Trace        = model.Trace
+	Aggregate    = model.TraceAggregate
+	StackMetrics = model.TraceStackAggregate
+	StackCost    = model.TraceStackCost
+	Summary      = model.TraceSummary
 	Event        = model.Event
 	Resource     = model.Resource
 	Stack        = model.TraceStack

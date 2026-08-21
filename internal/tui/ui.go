@@ -21,7 +21,7 @@ import (
 // enginesDoneMsg closes the TUI after every configured process exits.
 type enginesDoneMsg struct{}
 
-func initialModel(engines []*engine.Engine, services []config.Service, logPath string, dump io.Writer, configuredTheme ...styles.Theme) model {
+func initialModel(engines []*engine.Engine, services []config.Service, logPath string, dump io.Writer, configuredTheme ...styles.Theme) *model {
 	theme := styles.Zakura
 	if len(configuredTheme) > 0 {
 		theme = configuredTheme[0]
@@ -63,7 +63,7 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 	ctx := tuicontext.New(engines, pageModels, logPath)
 	keyMap := keys.NewModel()
 
-	m := model{
+	m := &model{
 		dump:      dump,
 		ctx:       ctx,
 		statusbar: statusbar.New(ctx, keyMap, theme),
@@ -76,12 +76,12 @@ func initialModel(engines []*engine.Engine, services []config.Service, logPath s
 }
 
 // Init starts every service page.
-func (m model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, pages.NextTelemetryTick(), m.statusbar.Init(), m.initScreen())
+func (m *model) Init() tea.Cmd {
+	return tea.Batch(tea.RequestBackgroundColor, m.statusbar.Init(), m.initScreen())
 }
 
 // initScreen initializes every page concurrently.
-func (m model) initScreen() tea.Cmd {
+func (m *model) initScreen() tea.Cmd {
 	pages := m.ctx.Pages()
 	commands := make([]tea.Cmd, 0, len(pages))
 	for _, page := range pages {

@@ -28,7 +28,7 @@ func TestServerRendersGraphViewport(t *testing.T) {
 	page, command := server.Update(pages.ViewportMsg{X: 1, Y: 2, Width: 60, Height: 12, Visible: true})
 	require.NotNil(t, command)
 
-	view := page.(Model).View()
+	view := page.(*Model).View()
 	require.Equal(t, 60, lipgloss.Width(view.Content))
 	require.Equal(t, 12, lipgloss.Height(view.Content))
 	require.Equal(t, tea.MouseModeCellMotion, view.MouseMode)
@@ -86,15 +86,15 @@ func TestServerSwitchesViewsFromPager(t *testing.T) {
 		},
 	}, nil)
 	page, _ := server.Update(pages.ViewportMsg{Width: 21, Height: 8, Visible: true})
-	require.Equal(t, 2, page.(Model).pager.TotalPages)
+	require.Equal(t, 2, page.(*Model).pager.TotalPages)
 	page, command := page.Update(tea.MouseClickMsg{X: 10, Y: 7, Button: tea.MouseLeft})
 
-	require.Equal(t, 0, page.(Model).pager.Page)
-	require.Equal(t, 1, page.(Model).pending)
+	require.Equal(t, 0, page.(*Model).pager.Page)
+	require.Equal(t, 1, page.(*Model).pending)
 	require.NotNil(t, command)
 	page, command = page.Update(switchGraphMsg{service: "api", page: 1})
-	require.Equal(t, 1, page.(Model).pager.Page)
-	require.Contains(t, page.(Model).View().Content, "main.go")
+	require.Equal(t, 1, page.(*Model).pager.Page)
+	require.Contains(t, page.(*Model).View().Content, "main.go")
 	require.NotNil(t, command)
 }
 
@@ -120,22 +120,22 @@ func TestServerSwitchesViewsFromShiftKeybindings(t *testing.T) {
 	page, _ := server.Update(pages.ViewportMsg{Width: 21, Height: 8, Visible: true})
 
 	page, command := page.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModShift, Text: "L"})
-	require.Equal(t, 0, page.(Model).pager.Page)
-	require.Equal(t, 1, page.(Model).pending)
+	require.Equal(t, 0, page.(*Model).pager.Page)
+	require.Equal(t, 1, page.(*Model).pending)
 	require.NotNil(t, command)
 
 	page, command = page.Update(switchGraphMsg{service: "api", page: 1})
-	require.Equal(t, 1, page.(Model).pager.Page)
-	require.Contains(t, page.(Model).View().Content, "main.go")
+	require.Equal(t, 1, page.(*Model).pager.Page)
+	require.Contains(t, page.(*Model).View().Content, "main.go")
 	require.NotNil(t, command)
 
 	page, command = page.Update(tea.KeyPressMsg{Code: 'h', Mod: tea.ModShift, Text: "H"})
-	require.Equal(t, 1, page.(Model).pager.Page)
-	require.Equal(t, 0, page.(Model).pending)
+	require.Equal(t, 1, page.(*Model).pager.Page)
+	require.Equal(t, 0, page.(*Model).pending)
 	require.NotNil(t, command)
 
 	page, _ = page.Update(switchGraphMsg{service: "api", page: 0})
-	require.Equal(t, 0, page.(Model).pager.Page)
+	require.Equal(t, 0, page.(*Model).pager.Page)
 }
 
 func TestServerTogglesMetricsOverlay(t *testing.T) {
@@ -167,4 +167,24 @@ func TestServerTogglesMetricsOverlay(t *testing.T) {
 
 	page, _ = page.Update(tea.KeyPressMsg{Code: 'm', Mod: tea.ModShift, Text: "M"})
 	require.NotContains(t, page.View().Content, "live heap")
+}
+
+func TestTelemetryInvalidatesOnlyVisibleMetrics(t *testing.T) {
+	target := &engine.Engine{
+		Service: config.Service{Name: "api", Type: config.ServiceTypeServer, Lang: config.ServiceLangGo},
+		Graph:   model.BuildRuntimeGraph("example", &model.StaticGraph{}),
+	}
+	server := New(target, nil)
+	server.telemetry = 1
+	revision := server.Revision()
+
+	updated, _ := server.Update(pages.TelemetryTickMsg{})
+	server = updated.(*Model)
+	require.Equal(t, revision, server.Revision())
+
+	server.showMetrics = true
+	server.telemetry = 1
+	revision = server.Revision()
+	updated, _ = server.Update(pages.TelemetryTickMsg{})
+	require.Greater(t, updated.Revision(), revision)
 }

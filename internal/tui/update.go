@@ -10,11 +10,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 )
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var telemetryCmd tea.Cmd
-	if _, ok := msg.(pages.TelemetryTickMsg); ok {
-		telemetryCmd = pages.NextTelemetryTick()
-	}
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.dump != nil {
 		if summary, ok := msg.(interface{ DebugSummary() string }); ok {
 			_, _ = fmt.Fprintln(m.dump, summary.DebugSummary())
@@ -24,6 +20,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			spew.Fdump(m.dump, msg)
 		}
+	}
+	if tick, ok := msg.(pages.TelemetryTickMsg); ok {
+		commands, refresh := m.updateTelemetry(tick)
+		if refresh {
+			m.refreshView()
+		}
+		return m, pages.BatchCommands(commands)
 	}
 	switch msg := msg.(type) {
 	case enginesDoneMsg:
@@ -37,7 +40,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case tea.WindowSizeMsg:
 		refresh = true
-	case tea.KeyPressMsg, tea.MouseClickMsg, tea.ColorProfileMsg, tea.BackgroundColorMsg:
+	case tea.ColorProfileMsg, tea.BackgroundColorMsg:
+		m.renderEpoch++
 		refresh = true
 	}
 	componentMsg := msg
@@ -96,12 +100,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if refresh {
 			m.refreshView()
 		}
-		return m, tea.Batch(telemetryCmd, statusCmd, tea.Sequence(hiddenCmd, pageCmd))
+		return m, pages.BatchPair(statusCmd, tea.Sequence(hiddenCmd, pageCmd))
 	}
 	if refresh {
 		m.refreshView()
 	}
-	return m, tea.Batch(telemetryCmd, statusCmd)
+	return m, statusCmd
+}
+
+func (m *model) updateTelemetry(msg pages.TelemetryTickMsg) ([]tea.Cmd, bool) {
+	active := m.ctx.ActivePage()
+	var commands []tea.Cmd
+	refresh := false
+	for _, page := range m.ctx.Pages() {
+		if msg.Service != "" && page.Name() != msg.Service {
+			continue
+		}
+		previousRevision := page.Revision()
+		page, command := page.Update(msg)
+		m.ctx.SetPage(page)
+		if page.Name() == active && page.Revision() != previousRevision {
+			refresh = true
+		}
+		if command != nil {
+			commands = append(commands, command)
+		}
+	}
+	return commands, refresh
 }
 
 func blocksPageInput(msg tea.Msg, bodyHeight int, helpVisible bool) bool {

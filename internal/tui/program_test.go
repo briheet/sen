@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	postgresanalysis "github.com/briheet/sen/internal/adapters/postgres/analysis"
 	"github.com/briheet/sen/internal/config"
 	"github.com/briheet/sen/internal/engine"
 	domain "github.com/briheet/sen/internal/model"
@@ -54,7 +55,7 @@ func TestProgramNavigatesPages(t *testing.T) {
 	})
 	tm.Type("q")
 
-	final := tm.FinalModel(t, teatest.WithFinalTimeout(time.Second)).(model)
+	final := tm.FinalModel(t, teatest.WithFinalTimeout(time.Second)).(*model)
 	require.Equal(t, "api", final.ctx.ActivePage())
 	require.Equal(t, 80, final.width)
 	require.Equal(t, 24, final.height)
@@ -67,7 +68,7 @@ func TestProgramQuitsWhenEnginesFinish(t *testing.T) {
 	tm.Send(enginesDoneMsg{})
 	final := tm.FinalModel(t, teatest.WithFinalTimeout(time.Second))
 
-	require.IsType(t, model{}, final)
+	require.IsType(t, &model{}, final)
 }
 
 func TestProgramEmitsKittyGraph(t *testing.T) {
@@ -124,6 +125,36 @@ func TestProgramPaintsLabelsWhenSwitchingGraphKinds(t *testing.T) {
 		placement := bytes.LastIndex(output, []byte("a=p,z=-1"))
 		label := bytes.Index(output, []byte("main.go"))
 		return label >= 0 && placement > label
+	})
+}
+
+func TestProgramSwitchesDatabaseViewsWithShiftKeys(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	static := postgresanalysis.BuildGraph(
+		[]postgresanalysis.Statement{{QueryID: 42, Query: "SELECT * FROM users"}},
+		[]postgresanalysis.Table{{Name: "users"}},
+	)
+	target := &engine.Engine{
+		Service: config.Service{Name: "database", Type: config.ServiceTypeDB, Provider: config.ServiceProviderPostgres},
+		Graph:   domain.BuildRuntimeGraph(postgresanalysis.ModulePath, static),
+	}
+	tm := teatest.NewTestModel(t, initialModel([]*engine.Engine{target}, []config.Service{target.Service}, "", nil),
+		teatest.WithInitialTermSize(60, 20),
+	)
+	t.Cleanup(func() { require.NoError(t, tm.Quit()) })
+
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		return bytes.Contains(output, []byte("SELECT * FROM users"))
+	})
+	tm.Type("L")
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		return bytes.Contains(output, []byte("users"))
+	})
+	tm.Type("H")
+	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
+		return bytes.Contains(output, []byte("SELECT * FROM users"))
 	})
 }
 

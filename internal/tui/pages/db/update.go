@@ -23,25 +23,28 @@ type switchGraphMsg struct {
 }
 
 // Init starts graph-owned work after a viewport arrives.
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	commands := make([]tea.Cmd, 0, len(m.graphs))
 	for index := range m.graphs {
 		if command := m.graphs[index].Init(); command != nil {
 			commands = append(commands, command)
 		}
 	}
-	return tea.Batch(commands...)
+	return pages.BatchCommands(commands)
 }
 
 // Update routes telemetry and interaction to the selected database graph.
-func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
+	if _, ok := msg.(tea.ColorProfileMsg); ok {
+		m.revision++
+	}
 	if _, ok := msg.(tea.BackgroundColorMsg); ok {
 		m.metrics, _ = m.metrics.Update(msg)
 		m.revision++
 	}
 	if obscured, ok := msg.(pages.ObscuredMsg); ok {
 		m.obscured = obscured.Obscured
-		commands := make([]tea.Cmd, 0, len(m.graphs))
+		var commands []tea.Cmd
 		for index := range m.graphs {
 			obscured.Obscured = m.obscured || (m.showMetrics && index == m.pager.Page)
 			var command tea.Cmd
@@ -51,7 +54,7 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 			}
 		}
 		m.revision++
-		return m, tea.Batch(commands...)
+		return m, pages.BatchCommands(commands)
 	}
 	if tick, ok := msg.(pages.TelemetryTickMsg); ok && m.Engine != nil {
 		revision := m.Engine.Revision()
@@ -66,8 +69,10 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 		}
 		m.telemetry = revision
 		m.metrics.ApplySnapshot(snapshot.Metrics, tick.At)
-		m.revision++
-		commands := make([]tea.Cmd, 0, len(m.graphs))
+		if m.showMetrics {
+			m.revision++
+		}
+		var commands []tea.Cmd
 		for index := range m.graphs {
 			var command tea.Cmd
 			m.graphs[index], command = m.graphs[index].Update(graph.TelemetryMsg{
@@ -78,7 +83,7 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 				commands = append(commands, command)
 			}
 		}
-		return m, tea.Batch(commands...)
+		return m, pages.BatchCommands(commands)
 	}
 	if press, ok := msg.(tea.KeyPressMsg); ok && m.Engine != nil && key.Matches(press, toggleMetrics) {
 		m.showMetrics = !m.showMetrics
@@ -138,7 +143,7 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 		bodyHeight := max(0, m.height-1)
 		panelWidth, panelHeight := dbmetrics.Size(m.width, bodyHeight)
 		m.metrics, _ = m.metrics.Update(tea.WindowSizeMsg{Width: panelWidth, Height: panelHeight})
-		commands := make([]tea.Cmd, 0, len(m.graphs))
+		var commands []tea.Cmd
 		for index := range m.graphs {
 			graphViewport := viewport
 			graphViewport.Width = m.width
@@ -151,7 +156,7 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 			}
 		}
 		m.revision++
-		return m, tea.Batch(commands...)
+		return m, pages.BatchCommands(commands)
 	}
 
 	if click, ok := msg.(tea.MouseClickMsg); ok && click.Y == m.height-1 {
@@ -184,7 +189,7 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 	}
 
 	// Renderer messages carry an owner, so both graphs can safely consume them.
-	commands := make([]tea.Cmd, 0, len(m.graphs))
+	var commands []tea.Cmd
 	for index := range m.graphs {
 		var command tea.Cmd
 		m.graphs[index], command = m.graphs[index].Update(msg)
@@ -192,10 +197,10 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 			commands = append(commands, command)
 		}
 	}
-	return m, tea.Batch(commands...)
+	return m, pages.BatchCommands(commands)
 }
 
-func (m Model) switchPage(page int) (pages.Page, tea.Cmd, bool) {
+func (m *Model) switchPage(page int) (pages.Page, tea.Cmd, bool) {
 	if page < 0 || page >= m.pager.TotalPages || page == m.pager.Page || m.pending >= 0 {
 		return m, nil, false
 	}

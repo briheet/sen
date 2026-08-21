@@ -12,13 +12,17 @@ import (
 
 // Model contains the bottom workspace navigation state.
 type Model struct {
-	carousel carousel.Model
-	help     help.Model
-	keys     *keys.Model
-	ctx      *context.ProgramContext
-	style    Style
-	width    int
-	showHelp bool
+	carousel      carousel.Model
+	help          help.Model
+	keys          *keys.Model
+	ctx           *context.ProgramContext
+	style         Style
+	width         int
+	showHelp      bool
+	view          string
+	helpView      string
+	viewValid     bool
+	helpViewValid bool
 }
 
 // New creates a status bar for the configured service pages.

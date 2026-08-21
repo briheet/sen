@@ -44,19 +44,29 @@ func TestPageRendersCommandGraphAndMetricsOverlay(t *testing.T) {
 	}, nil)
 
 	updated, _ := page.Update(pages.ViewportMsg{Width: 80, Height: 18, Visible: true})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.Equal(t, 80, lipgloss.Width(page.View().Content))
 	require.Equal(t, 18, lipgloss.Height(page.View().Content))
+	require.Equal(t, 1, page.pager.TotalPages)
+	require.Contains(t, page.View().Content, "●")
 	require.Contains(t, page.View().Content, "Pixel graph requires")
 
 	updated, _ = page.Update(tea.KeyPressMsg{Code: 'm', Mod: tea.ModShift, Text: "M"})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.Contains(t, page.View().Content, "commands/s")
 	require.Contains(t, page.View().Content, "2.0 MiB")
 
 	updated, _ = page.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	page = updated.(Model)
+	page = updated.(*Model)
 	require.NotContains(t, page.View().Content, "commands/s")
+}
+
+func TestPageViewCachesUnchangedRevision(t *testing.T) {
+	page := FromService(config.Service{Name: "cache", Type: config.ServiceTypeKV, Provider: config.ServiceProviderRedis})
+	_, _ = page.Update(pages.ViewportMsg{Width: 80, Height: 18, Visible: true})
+	_ = page.View()
+
+	require.Zero(t, testing.AllocsPerRun(100, func() { _ = page.View() }))
 }
 
 func TestPlaceholderPageReportsUnavailableTelemetry(t *testing.T) {
@@ -105,6 +115,26 @@ func TestRedisProfileReachesCommandEdges(t *testing.T) {
 	_, _ = page.Update(pages.TelemetryTickMsg{})
 
 	require.Contains(t, debug.String(), "active_nodes=1 active_edges=1")
+}
+
+func TestTelemetryInvalidatesOnlyVisibleMetrics(t *testing.T) {
+	target := &engine.Engine{
+		Service: config.Service{Name: "cache", Type: config.ServiceTypeKV, Provider: config.ServiceProviderRedis},
+		Graph:   model.BuildRuntimeGraph(analysis.ModulePath, analysis.BuildGraph()),
+	}
+	page := New(target, nil)
+	page.telemetry = 1
+	revision := page.Revision()
+
+	updated, _ := page.Update(pages.TelemetryTickMsg{})
+	page = updated.(*Model)
+	require.Equal(t, revision, page.Revision())
+
+	page.showMetrics = true
+	page.telemetry = 1
+	revision = page.Revision()
+	updated, _ = page.Update(pages.TelemetryTickMsg{})
+	require.Greater(t, updated.Revision(), revision)
 }
 
 func commandNode(t *testing.T, static *model.StaticGraph, name string) model.NodeID {

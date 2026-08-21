@@ -69,7 +69,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.dirty = true
-		m.revision++
 		return m, m.upload()
 	case pages.ObscuredMsg:
 		if m.obscured == msg.Obscured {

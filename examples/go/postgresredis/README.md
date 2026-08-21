@@ -15,8 +15,12 @@ DEBUG=true ./bin/sen run --profile examples/go/postgresredis
 In another terminal, drive mixed application, database, and cache activity:
 
 ```sh
-python3 examples/go/postgresredis/requests.py --duration 45 --rate 20
+python3 examples/go/postgresredis/load.py
 ```
+
+The default workload runs for five minutes with 128 workers and no client-side
+rate cap. Use `--rate` to cap requests per second or `--workers` to change
+concurrency.
 
 Select `api` for the Go server graph, `database` for PostgreSQL statements and
 tables, and `cache` for Redis commands. Press `M` in the PostgreSQL or Redis

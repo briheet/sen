@@ -13,10 +13,13 @@ import (
 var toggleMetrics = key.NewBinding(key.WithKeys("M", "shift+m"))
 
 // Init starts commands required by the key-value page.
-func (Model) Init() tea.Cmd { return nil }
+func (*Model) Init() tea.Cmd { return nil }
 
 // Update handles messages for the key-value page.
-func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
+	if _, ok := msg.(tea.ColorProfileMsg); ok {
+		m.revision++
+	}
 	if _, ok := msg.(tea.BackgroundColorMsg); ok {
 		m.metrics, _ = m.metrics.Update(msg)
 		m.revision++
@@ -42,7 +45,9 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 		}
 		m.telemetry = revision
 		m.metrics.ApplySnapshot(snapshot.Metrics, tick.At)
-		m.revision++
+		if m.showMetrics {
+			m.revision++
+		}
 		var command tea.Cmd
 		m.graph, command = m.graph.Update(graph.TelemetryMsg{
 			Nodes:     snapshot.NodeActivity,
@@ -79,12 +84,17 @@ func (m Model) Update(msg tea.Msg) (pages.Page, tea.Cmd) {
 	if viewport, ok := msg.(pages.ViewportMsg); ok {
 		m.width = max(0, viewport.Width)
 		m.height = max(0, viewport.Height)
-		panelWidth, panelHeight := redismetrics.Size(m.width, m.height)
+		bodyHeight := max(0, m.height-1)
+		panelWidth, panelHeight := redismetrics.Size(m.width, bodyHeight)
 		m.metrics, _ = m.metrics.Update(tea.WindowSizeMsg{Width: panelWidth, Height: panelHeight})
+		viewport.Height = bodyHeight
 		var command tea.Cmd
 		m.graph, command = m.graph.Update(viewport)
 		m.revision++
 		return m, command
+	}
+	if click, ok := msg.(tea.MouseClickMsg); ok && click.Y == m.height-1 {
+		return m, nil
 	}
 
 	switch msg.(type) {

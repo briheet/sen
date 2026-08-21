@@ -3,10 +3,15 @@ package db
 import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/briheet/sen/internal/tui/pages"
 )
 
 // View renders the selected database graph and optional metrics dashboard.
-func (m Model) View() tea.View {
+func (m *Model) View() tea.View {
+	revision := m.Revision()
+	if m.viewValid && m.viewRevision == revision {
+		return m.view
+	}
 	bodyHeight := max(0, m.height-1)
 	content := m.graphs[m.pager.Page].View()
 	if m.Engine == nil {
@@ -16,18 +21,19 @@ func (m Model) View() tea.View {
 	}
 	if m.showMetrics {
 		if panel := m.metrics.View(); panel != "" {
-			canvas := lipgloss.NewCanvas(m.width, bodyHeight)
-			canvas.Compose(lipgloss.NewCompositor(
-				lipgloss.NewLayer(content),
-				lipgloss.NewLayer(panel).
-					X(max(0, (m.width-lipgloss.Width(panel))/2)).
-					Y(max(0, (bodyHeight-lipgloss.Height(panel))/2)),
-			))
-			content = canvas.Render()
+			content = pages.Overlay(&m.canvas, m.width, bodyHeight, content, panel)
 		}
 	}
-	indicator := lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(m.pager.View())
-	view := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, content, indicator))
+	view := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, content, m.indicatorView()))
 	view.MouseMode = tea.MouseModeCellMotion
-	return view
+	m.view, m.viewRevision, m.viewValid = view, revision, true
+	return m.view
+}
+
+func (m *Model) indicatorView() string {
+	if m.indicator == "" || m.indicatorPage != m.pager.Page || m.indicatorWidth != m.width {
+		m.indicator = lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(m.pager.View())
+		m.indicatorPage, m.indicatorWidth = m.pager.Page, m.width
+	}
+	return m.indicator
 }
